@@ -7,6 +7,7 @@ include ':junit-sharding'
 include ':addons:base', ':addons:base:apk'
 include ':addons:languages'
 include ':addons:languages:english', ':addons:languages:english:pack'
+include ':addons:languages:english:apk'
 
 //list of packs should be alphabetized-ordered
 include ':addons:languages:afrikaans_oss:pack', ':addons:languages:afrikaans_oss:apk'
@@ -74,6 +75,7 @@ include ':addons:themes'
 include ':addons:themes:classic_pc:pack', ':addons:themes:classic_pc:apk'
 include ':addons:themes:ics:pack', ':addons:themes:ics:apk'
 include ':addons:themes:israel64:pack', ':addons:themes:israel64:apk'
+include ':addons:themes:min2m:pack', ':addons:themes:min2m:apk'
 include ':addons:themes:three_d:pack', ':addons:themes:three_d:apk'
 
 //list of quick-text should be alphabetized-ordered

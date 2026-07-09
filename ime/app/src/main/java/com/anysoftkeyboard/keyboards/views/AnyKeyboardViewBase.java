@@ -158,6 +158,7 @@ public class AnyKeyboardViewBase extends View implements InputViewBinder, Pointe
   private FontMetrics mKeyboardNameFontMetrics;
   private float mHintTextSize;
   float mHintTextSizeMultiplier;
+  private float mHintHorizontalPositionFactor = -1f;
   private FontMetrics mHintTextFontMetrics;
   private int mThemeHintLabelAlign;
   private int mThemeHintLabelVAlign;
@@ -656,6 +657,7 @@ public class AnyKeyboardViewBase extends View implements InputViewBinder, Pointe
           return false;
         } else {
           mThemeOverlayCombiner.setThemeKeyBackground(keyBackground);
+          keyBackground.getPadding(mKeyBackgroundPadding);
         }
       }
       case R.attr.verticalCorrection -> {
@@ -777,9 +779,14 @@ public class AnyKeyboardViewBase extends View implements InputViewBinder, Pointe
         if (mHintTextSize == -1) return false;
         mHintTextSize *= mKeysHeightFactor;
       }
-      case R.attr.hintTextColor ->
+        case R.attr.hintTextColor ->
           mThemeOverlayCombiner.setThemeHintTextColor(
-              remoteTypedArray.getColor(remoteTypedArrayIndex, 0xFF000000));
+            remoteTypedArray.getColor(remoteTypedArrayIndex, 0xFF000000));
+        case R.attr.hintHorizontalPositionFactor -> {
+        final float positionFactor = remoteTypedArray.getFloat(remoteTypedArrayIndex, -1f);
+        mHintHorizontalPositionFactor =
+          (positionFactor >= 0f && positionFactor <= 1f) ? positionFactor : -1f;
+        }
       case R.attr.hintLabelVAlign ->
           mThemeHintLabelVAlign = remoteTypedArray.getInt(remoteTypedArrayIndex, Gravity.BOTTOM);
       case R.attr.hintLabelAlign ->
@@ -1358,7 +1365,19 @@ public class AnyKeyboardViewBase extends View implements InputViewBinder, Pointe
         // a little more room
         // in case the theme designer didn't account for the hint
         // label location
-        if (hintAlign == Gravity.START) {
+        if (mHintHorizontalPositionFactor >= 0f && mHintHorizontalPositionFactor <= 1f) {
+          if (hintAlign == Gravity.START || hintAlign == Gravity.LEFT) {
+            paint.setTextAlign(Align.LEFT);
+          } else if (hintAlign == Gravity.CENTER_HORIZONTAL) {
+            paint.setTextAlign(Align.CENTER);
+          } else {
+            paint.setTextAlign(Align.RIGHT);
+          }
+          hintX =
+              mKeyBackgroundPadding.left
+                  + (float) (key.width - mKeyBackgroundPadding.left - mKeyBackgroundPadding.right)
+                      * mHintHorizontalPositionFactor;
+        } else if (hintAlign == Gravity.START || hintAlign == Gravity.LEFT) {
           paint.setTextAlign(Align.LEFT);
           hintX = mKeyBackgroundPadding.left + 0.5f;
         } else if (hintAlign == Gravity.CENTER_HORIZONTAL) {

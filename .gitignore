@@ -53,3 +53,7 @@ node_modules
 
 # personal scratch work area
 scratch/
+
+# local planning/context notes (not for commit)
+*.local.md
+scripts/*

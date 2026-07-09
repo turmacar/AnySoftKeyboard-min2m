@@ -95,6 +95,9 @@
         <!-- Color to use for hint text. -->
         <attr name="hintTextColor" format="reference|color"/>
 
+        <!-- Horizontal hint position inside the key content box, from 0.0 (left) to 1.0 (right). -->
+        <attr name="hintHorizontalPositionFactor" format="float"/>
+
         <!-- Size of the text for the prefered word. -->
         <attr name="suggestionPreferedWordTextSize" format="reference|dimension"/>
         <!-- vertical padding. -->
