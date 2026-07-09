@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette sampled to match Minuum screenshot 02 (expanded strip) -->
+    <color name="min2m_color_keyboard_bg">#FF2A3742</color>
+    <color name="min2m_color_suggestion_bg">#FF23313D</color>
+
+    <color name="min2m_color_key_normal">#FF33424E</color>
+    <color name="min2m_color_key_normal_pressed">#FF3D4E5C</color>
+    <color name="min2m_color_key_function">#FF2E3E4A</color>
+    <color name="min2m_color_key_function_pressed">#FF4F6372</color>
+    <color name="min2m_color_key_action">#FF2E3E4A</color>
+    <color name="min2m_color_key_action_pressed">#FF4F6372</color>
+
+    <color name="min2m_color_key_text_normal">#FFF4FAFF</color>
+    <color name="min2m_color_key_text_pressed">#FFFFFFFF</color>
+    <color name="min2m_color_key_text_function">#FF8CD8D3</color>
+    <color name="min2m_color_key_text_action">#FF1E4650</color>
+
+    <color name="min2m_color_hint_normal">#FF8FD6D1</color>
+    <color name="min2m_color_hint_pressed">#FFA9E9E3</color>
+    <color name="min2m_color_hint_function">#FF8FD6D1</color>
+    <color name="min2m_color_hint_action">#FF2A5E66</color>
+
+    <color name="min2m_color_space_accent">#FF7FD8D2</color>
+    <color name="min2m_color_space_accent_pressed">#FF99E7E1</color>
+
+    <color name="min2m_color_suggestion_normal">#FFE7EEF4</color>
+    <color name="min2m_color_suggestion_recommended">#FFFFFFFF</color>
+    <color name="min2m_color_suggestion_other">#FFB8C4CF</color>
+
+    <color name="min2m_color_preview_bg">#FF2F3F4B</color>
+    <color name="min2m_color_preview_stroke">#FF84DCD6</color>
+</resources>

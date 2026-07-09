@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<KeyboardThemes>
+    <KeyboardTheme
+    id="d7f2f760-27c0-4af5-9f89-6c72d31aa8df"
+    nameResId="@string/min2m_keyboard_theme_name"
+    themeRes="@style/Min2mAnyKeyboardTheme"
+    popupThemeRes="@style/Min2mAnyKeyboardPopupTheme"
+    iconsThemeRes="@style/Min2mAnyKeyboardIconsTheme"
+    description="@string/min2m_keyboard_theme_description"
+        index="1"/>
+</KeyboardThemes>

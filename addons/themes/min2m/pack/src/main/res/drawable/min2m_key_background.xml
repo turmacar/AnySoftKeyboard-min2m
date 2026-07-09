@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:ask="http://schemas.android.com/apk/res-auto">
+
+    <item ask:key_type_action="true" android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_action_pressed" />
+        </shape>
+    </item>
+    <item ask:key_type_action="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_action" />
+        </shape>
+    </item>
+
+    <item ask:key_type_function="true" android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_function_pressed" />
+        </shape>
+    </item>
+    <item ask:key_type_function="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_function" />
+        </shape>
+    </item>
+
+    <item android:state_checkable="true" android:state_checked="true" android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_function_pressed" />
+        </shape>
+    </item>
+    <item android:state_checkable="true" android:state_checked="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_function" />
+        </shape>
+    </item>
+
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_normal_pressed" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="7dp" />
+            <solid android:color="@color/min2m_color_key_normal" />
+        </shape>
+    </item>
+</selector>

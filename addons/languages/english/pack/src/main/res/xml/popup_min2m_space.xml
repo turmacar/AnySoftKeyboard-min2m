@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
+    android:keyWidth="50%p"
+    android:keyHeight="36dp">
+
+    <Row>
+        <Key android:codes="@integer/key_code_voice_input" android:keyLabel="Voice" android:keyEdgeFlags="left"/>
+        <Key android:codes="@integer/key_code_settings" android:keyLabel="Settings" android:keyEdgeFlags="right"/>
+    </Row>
+</Keyboard>
