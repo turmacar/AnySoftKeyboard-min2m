@@ -67,4 +67,10 @@
               defaultDictionaryLocale="en" description="@string/min2m_keyboard_description"
               index="14" defaultEnabled="false"
               physicalKeyboardMappingResId="@xml/english_physical" />
+    <Keyboard nameResId="@string/min2m_compact_keyboard"
+              layoutResId="@xml/qwerty_min2m_compact" landscapeResId="@xml/qwerty_min2m_compact"
+              id="7a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
+              defaultDictionaryLocale="en" description="@string/min2m_compact_keyboard_description"
+              index="15" defaultEnabled="false"
+              physicalKeyboardMappingResId="@xml/english_physical" />
 </Keyboards>

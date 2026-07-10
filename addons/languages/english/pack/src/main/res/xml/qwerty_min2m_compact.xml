@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:ask="http://schemas.android.com/apk/res-auto"
+    android:keyWidth="3.8%p"
+    android:keyHeight="@integer/key_normal_height"
+    android:verticalGap="1dp">
+
+    <!-- Main 1D letter row: interleaved Minuum-style arrangement -->
+    <!-- Order: Q A Z W S X E D C R F V T G B Y H N U J M I K O L P -->
+    <!-- Hints follow compact row order: 1 2 3 4 5 6 7 8 9 0 : ; ' " @ # ( ) _ ! , . ? - / -->
+    <Row android:rowEdgeFlags="top">
+        <Key android:codes="q" ask:hintLabel="1" android:popupCharacters="1" android:keyEdgeFlags="left"/>
+        <Key android:codes="a" ask:hintLabel="2" android:popupCharacters="2"/>
+        <Key android:codes="z" ask:hintLabel="3" android:popupCharacters="3"/>
+        <Key android:codes="w" ask:hintLabel="4" android:popupCharacters="4"/>
+        <Key android:codes="s" ask:hintLabel="5" android:popupCharacters="5"/>
+        <Key android:codes="x" ask:hintLabel="6" android:popupCharacters="6"/>
+        <Key android:codes="e" ask:hintLabel="7" android:popupCharacters="7"/>
+        <Key android:codes="d" ask:hintLabel="8" android:popupCharacters="8"/>
+        <Key android:codes="c" ask:hintLabel="9" android:popupCharacters="9"/>
+        <Key android:codes="r" ask:hintLabel="0" android:popupCharacters="0"/>
+        <Key android:codes="f" ask:hintLabel=":" android:popupCharacters=":"/>
+        <Key android:codes="v" ask:hintLabel=";" android:popupCharacters=";"/>
+        <Key android:codes="t" ask:hintLabel="&apos;" android:popupCharacters="&apos;"/>
+        <Key android:codes="g" ask:hintLabel="&quot;" android:popupCharacters="&quot;"/>
+        <Key android:codes="b" ask:hintLabel="@" android:popupCharacters="\@"/>
+        <Key android:codes="y" ask:hintLabel="#" android:popupCharacters="#"/>
+        <Key android:codes="h" ask:hintLabel="(" android:popupCharacters="("/>
+        <Key android:codes="n" ask:hintLabel=")" android:popupCharacters=")"/>
+        <Key android:codes="u" ask:hintLabel="_" android:popupCharacters="_"/>
+        <Key android:codes="j" ask:hintLabel="!" android:popupCharacters="!"/>
+        <Key android:codes="m" ask:hintLabel="," android:popupCharacters="," android:keyWidth="5%p"/>
+        <Key android:codes="i" ask:hintLabel="." android:popupCharacters="."/>
+        <Key android:codes="k" ask:hintLabel="?" android:popupCharacters="?"/>
+        <Key android:codes="o" ask:hintLabel="-" android:popupCharacters="-"/>
+        <Key android:codes="l" ask:hintLabel="/" android:popupCharacters="/"/>
+        <Key android:codes="p" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Utility row for normal mode -->
+    <Row android:keyboardMode="@integer/keyboard_mode_normal" android:rowEdgeFlags="bottom">
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_mode_symbols" android:keyWidth="10%p" android:keyEdgeFlags="left"/>
+        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"
+            ask:hintLabel="🙂" android:popupCharacters="!?"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_space" android:keyWidth="45%p"
+            ask:hintLabel="" android:popupKeyboard="@xml/popup_min2m_space"/>
+        <Key ask:isFunctional="true" android:codes="." android:keyWidth="10%p"
+            ask:hintLabel="!?" android:popupCharacters="!?"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_enter" android:keyWidth="25%p"
+            ask:longPressCode="@integer/key_code_settings" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Utility row for IM mode -->
+    <Row android:keyboardMode="@integer/keyboard_mode_im" android:rowEdgeFlags="bottom">
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_mode_symbols" android:keyWidth="10%p" android:keyEdgeFlags="left"/>
+        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"
+            ask:hintLabel="🙂" ask:longPressCode="@integer/key_code_quick_text_popup"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_space" android:keyWidth="45%p"
+            ask:hintLabel="" android:popupKeyboard="@xml/popup_min2m_space"/>
+        <Key ask:isFunctional="true" android:codes="." android:keyWidth="10%p"
+            ask:hintLabel="!?" android:popupCharacters="!?"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_enter" android:keyWidth="25%p"
+            ask:longPressCode="@integer/key_code_settings" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Utility row for URL mode -->
+    <Row android:keyboardMode="@integer/keyboard_mode_url" android:rowEdgeFlags="bottom">
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_mode_symbols" android:keyWidth="10%p" android:keyEdgeFlags="left"/>
+        <Key ask:isFunctional="true" android:codes="://" android:keyWidth="10%p"
+            ask:hintLabel="" ask:longPressCode="@integer/key_code_quick_text_popup"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_space" android:keyWidth="45%p"
+            ask:hintLabel="" android:popupKeyboard="@xml/popup_min2m_space"/>
+        <Key ask:isFunctional="true" android:codes="." android:keyWidth="10%p"
+            ask:hintLabel="!?" android:popupCharacters="!?"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_enter" android:keyWidth="25%p"
+            ask:longPressCode="@integer/key_code_settings" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Utility row for email mode -->
+    <Row android:keyboardMode="@integer/keyboard_mode_email" android:rowEdgeFlags="bottom">
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_mode_symbols" android:keyWidth="10%p" android:keyEdgeFlags="left"/>
+        <Key ask:isFunctional="true" android:codes="@" android:keyWidth="10%p"
+            ask:hintLabel="" ask:longPressCode="@integer/key_code_quick_text_popup"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_space" android:keyWidth="45%p"
+            ask:hintLabel="" android:popupKeyboard="@xml/popup_min2m_space"/>
+        <Key ask:isFunctional="true" android:codes="." android:keyWidth="10%p"
+            ask:hintLabel="!?" android:popupCharacters="!?"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_enter" android:keyWidth="25%p"
+            ask:longPressCode="@integer/key_code_settings" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Utility row for password mode -->
+    <Row android:keyboardMode="@integer/keyboard_mode_password" android:rowEdgeFlags="bottom">
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_mode_symbols" android:keyWidth="10%p" android:keyEdgeFlags="left"/>
+        <Key android:codes="44" android:keyLabel="," android:keyWidth="10%p"
+            ask:hintLabel="🙂" ask:longPressCode="@integer/key_code_quick_text_popup"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_space" android:keyWidth="45%p"
+            ask:hintLabel="" android:popupKeyboard="@xml/popup_min2m_space"/>
+        <Key ask:isFunctional="true" android:codes="@integer/key_code_enter" android:keyWidth="25%p"
+            ask:longPressCode="@integer/key_code_settings" android:keyEdgeFlags="right"/>
+    </Row>
+
+</Keyboard>

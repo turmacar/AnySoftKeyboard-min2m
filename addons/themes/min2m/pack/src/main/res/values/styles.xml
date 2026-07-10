@@ -39,7 +39,7 @@
         <item name="keyboardNameTextSize">0sp</item>
         <item name="keyboardNameTextColor">#00000000</item>
         <item name="hintTextSize">@dimen/min2m_hint_text_size</item>
-        <item name="hintHorizontalPositionFactor">0.66</item>
+        <item name="hintHorizontalPositionFactor">0.1</item>
         <item name="hintLabelAlign">left</item>
         <item name="hintLabelVAlign">top</item>
         <item name="labelTextSize">@dimen/key_label_text_size</item>
