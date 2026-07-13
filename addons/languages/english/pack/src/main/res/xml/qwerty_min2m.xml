@@ -33,7 +33,8 @@
 
     <Row>
         <Key android:keyWidth="15%p" android:codes="-1"
-            android:isModifier="true" android:isSticky="true" android:keyEdgeFlags="left"/>
+            android:isModifier="true" android:isSticky="true" android:keyEdgeFlags="left"
+            android:popupKeyboard="@xml/popup_min2m_shift"/>
         <Key android:codes="z" android:popupCharacters="&lt;źžż" ask:hintLabel="&lt;"/>
         <Key android:codes="x" android:popupCharacters=">£¢¥₩€" ask:hintLabel=">"/>
         <Key android:codes="c" android:popupCharacters=";çčć" ask:hintLabel=";"/>

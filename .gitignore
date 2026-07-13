@@ -57,3 +57,4 @@ scratch/
 # local planning/context notes (not for commit)
 *.local.md
 scripts/*
+scripts/deploy-local-app-addon.sh
