@@ -11,6 +11,7 @@ import com.anysoftkeyboard.dictionaries.DictionaryBackgroundLoader;
 import com.anysoftkeyboard.dictionaries.Suggest;
 import com.anysoftkeyboard.dictionaries.SuggestionsProvider;
 import com.anysoftkeyboard.dictionaries.WordComposer;
+import com.anysoftkeyboard.keyboards.Keyboard;
 import com.anysoftkeyboard.quicktextkeys.TagsExtractor;
 import com.anysoftkeyboard.quicktextkeys.TagsExtractorImpl;
 import com.anysoftkeyboard.utils.IMEUtil;
@@ -39,6 +40,8 @@ public class Min2mSuggest implements Suggest {
 
   @NonNull private final SuggestionsProvider mSuggestionsProvider;
   @NonNull private final Min2mVocabulary mVocabulary;
+  @NonNull private final SpatialScorer mSpatialScorer;
+  @NonNull private final BayesianCandidateRanker mRanker;
   @NonNull private final Context mContext;
 
   private final List<CharSequence> mSuggestions = new ArrayList<>();
@@ -60,6 +63,11 @@ public class Min2mSuggest implements Suggest {
     mSuggestionsProvider = new SuggestionsProvider(context);
     mVocabulary = new Min2mVocabulary();
     mVocabulary.open(context);
+    mSpatialScorer = new SpatialScorer();
+    mRanker = new BayesianCandidateRanker();
+    if (mVocabulary.isOpen()) {
+      mRanker.setMaxFrequency(mVocabulary.getMaxFrequency());
+    }
     setMaxSuggestions(mPrefMaxSuggestions);
   }
 
@@ -68,7 +76,18 @@ public class Min2mSuggest implements Suggest {
     mContext = null;
     mSuggestionsProvider = provider;
     mVocabulary = vocabulary;
+    mSpatialScorer = new SpatialScorer();
+    mRanker = new BayesianCandidateRanker();
     setMaxSuggestions(mPrefMaxSuggestions);
+  }
+
+  /**
+   * Registers the current keyboard's key geometry for spatial scoring.
+   * Call this when the keyboard layout changes.
+   */
+  public void registerKeyboard(@NonNull java.util.List<Keyboard.Key> keys) {
+    mSpatialScorer.registerKeyboard(keys);
+    Logger.d(TAG, "Registered keyboard with %d keys for spatial scoring", keys.size());
   }
 
   @Override
@@ -172,20 +191,36 @@ public class Min2mSuggest implements Suggest {
       List<Min2mVocabulary.CandidateWord> vocabMatches =
           mVocabulary.getPrefixMatches(lowerOriginalWord, mPrefMaxSuggestions * 2);
 
-      int maxFreq = mVocabulary.getMaxFrequency();
+      // Extract touch coordinates for spatial scoring
+      final boolean useSpatial = wordComposer.hasTouchCoordinates() && mSpatialScorer.hasKeyboard();
+      final int touchCount = wordComposer.codePointCount();
+      float[] touchXs = null;
+      float[] touchYs = null;
+      if (useSpatial) {
+        touchXs = new float[touchCount];
+        touchYs = new float[touchCount];
+        for (int i = 0; i < touchCount; i++) {
+          touchXs[i] = wordComposer.getTouchX(i);
+          touchYs[i] = wordComposer.getTouchY(i);
+        }
+      }
+
       for (Min2mVocabulary.CandidateWord candidate : vocabMatches) {
-        // Scale frequency to ASK's range. The vocabulary has frequencies up to ~13M;
-        // we map to a range where the top word gets just below VALID_TYPED_WORD_FREQUENCY
-        // so corrections can outrank but never beat the typed word.
         int scaledFreq;
         if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
           // Exact match (ignoring case) — treat as valid typed word
           scaledFreq = VALID_TYPED_WORD_FREQUENCY;
-          mCorrectSuggestionIndex = 0; // the typed word itself is valid
+          mCorrectSuggestionIndex = 0;
+        } else if (useSpatial) {
+          // Bayesian scoring: frequency prior + spatial likelihood
+          float spatialLogP = mSpatialScorer.scoreWord(
+              candidate.text, touchXs, touchYs, touchCount);
+          float bayesianScore = mRanker.score(candidate.frequency, spatialLogP);
+          scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
         } else {
-          // Scale into 1 .. (MAX_VALUE/2 - 1) range based on corpus frequency
-          scaledFreq =
-              1 + (int) ((long) candidate.frequency * (Integer.MAX_VALUE / 2 - 2) / maxFreq);
+          // Frequency-only fallback (no touch data)
+          scaledFreq = BayesianCandidateRanker.toIntPriority(
+              mRanker.scoreFrequencyOnly(candidate.frequency));
         }
 
         StringBuilder sb = getStringBuilderFromPool(candidate.text, isFirstCharCapitalized, isAllUpperCase);

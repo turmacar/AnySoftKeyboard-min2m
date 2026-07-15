@@ -31,6 +31,10 @@ public class WordComposer implements KeyCodesProvider {
   /** The list of unicode values for each keystroke (including surrounding keys) */
   private final ArrayList<int[]> mCodes = new ArrayList<>(Dictionary.MAX_WORD_LENGTH);
 
+  /** Per-keystroke touch coordinates for spatial scoring. -1 = not available. */
+  private final ArrayList<Float> mTouchXs = new ArrayList<>(Dictionary.MAX_WORD_LENGTH);
+  private final ArrayList<Float> mTouchYs = new ArrayList<>(Dictionary.MAX_WORD_LENGTH);
+
   /** This holds arrays for reuse. Will not exceed AndroidUserDictionary.MAX_WORD_LENGTH */
   private final List<int[]> mArraysToReuse = new ArrayList<>(Dictionary.MAX_WORD_LENGTH);
 
@@ -61,6 +65,8 @@ public class WordComposer implements KeyCodesProvider {
       System.arraycopy(codes, 0, newCodes, 0, codes.length);
       newWord.mCodes.add(newCodes);
     }
+    newWord.mTouchXs.addAll(mTouchXs);
+    newWord.mTouchYs.addAll(mTouchYs);
     newWord.mTypedWord.append(mTypedWord);
     newWord.mPreferredWord = mPreferredWord;
     newWord.mAutoCapitalized = mAutoCapitalized;
@@ -75,6 +81,8 @@ public class WordComposer implements KeyCodesProvider {
     mArraysToReuse.addAll(mCodes);
     if (mArraysToReuse.size() > 1024) mArraysToReuse.clear();
     mCodes.clear();
+    mTouchXs.clear();
+    mTouchYs.clear();
     mIsFirstCharCapitalized = false;
     mPreferredWord = null;
     mTypedWord.setLength(0);
@@ -130,15 +138,45 @@ public class WordComposer implements KeyCodesProvider {
    * @param codes the array of unicode values
    */
   public void add(int primaryCode, int[] codes) {
+    add(primaryCode, codes, -1f, -1f);
+  }
+
+  /**
+   * Add a new keystroke with touch coordinates for spatial scoring.
+   *
+   * @param primaryCode the primary key code
+   * @param codes nearby key codes sorted by proximity
+   * @param touchX the x coordinate of the key center (or actual touch), or -1 if unavailable
+   * @param touchY the y coordinate of the key center (or actual touch), or -1 if unavailable
+   */
+  public void add(int primaryCode, int[] codes, float touchX, float touchY) {
     final var charCount = Character.toChars(primaryCode, PRIMARY_CODE_CREATE, 0);
     mTypedWord.insert(mCursorPosition, PRIMARY_CODE_CREATE, 0, charCount);
 
     correctPrimaryJuxtapos(primaryCode, codes);
     // this will return a copy of the codes array, stored in an array with sufficient storage
     int[] reusableArray = getReusableArray(codes);
-    mCodes.add(mTypedWord.codePointCount(0, mCursorPosition), reusableArray);
+    int insertPos = mTypedWord.codePointCount(0, mCursorPosition);
+    mCodes.add(insertPos, reusableArray);
+    mTouchXs.add(insertPos, touchX);
+    mTouchYs.add(insertPos, touchY);
     mCursorPosition += charCount;
     if (Character.isUpperCase(primaryCode)) mCapsCount++;
+  }
+
+  /** Returns the touch X coordinate for the keystroke at the given codepoint index, or -1. */
+  public float getTouchX(int index) {
+    return index < mTouchXs.size() ? mTouchXs.get(index) : -1f;
+  }
+
+  /** Returns the touch Y coordinate for the keystroke at the given codepoint index, or -1. */
+  public float getTouchY(int index) {
+    return index < mTouchYs.size() ? mTouchYs.get(index) : -1f;
+  }
+
+  /** Returns true if touch coordinates are available for this word. */
+  public boolean hasTouchCoordinates() {
+    return !mTouchXs.isEmpty() && mTouchXs.get(0) >= 0;
   }
 
   public void simulateTypedWord(CharSequence typedWord) {

@@ -603,7 +603,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
     final InputConnection ic = getCurrentInputConnection();
     if (isPredictionOn()) {
-      mWord.add(primaryCode, nearByKeyCodes);
+      final float touchX = (key != null) ? key.x + key.width / 2f : -1f;
+      final float touchY = (key != null) ? key.y + key.height / 2f : -1f;
+      mWord.add(primaryCode, nearByKeyCodes, touchX, touchY);
       if (ic != null) {
         int newCursorPosition;
         if (mWord.cursorPosition() != mWord.charCount()) {
@@ -1234,6 +1236,11 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
   @Override
   public void onAlphabetKeyboardSet(@NonNull AnyKeyboard keyboard) {
     super.onAlphabetKeyboardSet(keyboard);
+
+    // Register keyboard geometry for spatial scoring in Min2m engine
+    if (mSuggest instanceof Min2mSuggest) {
+      ((Min2mSuggest) mSuggest).registerKeyboard(keyboard.getKeys());
+    }
 
     final Locale locale = keyboard.getLocale();
     mFrenchSpacePunctuationBehavior =
