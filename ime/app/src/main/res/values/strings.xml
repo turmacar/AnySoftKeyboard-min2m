@@ -308,6 +308,11 @@
     <string name="auto_pick_suggestion_aggressiveness_extreme">Extreme aggressiveness</string>
     <string name="auto_pick_suggestion_aggressiveness_summary">Aggressiveness level: %s</string>
 
+    <string name="suggestion_engine_title">Suggestion engine</string>
+    <string name="suggestion_engine_ask">Standard (ASK)</string>
+    <string name="suggestion_engine_min2m">Min2m (frequency-ranked)</string>
+    <string name="suggestion_engine_summary">Engine: %s</string>
+
     <string name="use_contacts_dictionary">Contacts dictionary</string>
     <string name="use_contacts_dictionary_on_summary">Suggest names from contacts list</string>
     <string name="use_contacts_dictionary_off_summary"/>
