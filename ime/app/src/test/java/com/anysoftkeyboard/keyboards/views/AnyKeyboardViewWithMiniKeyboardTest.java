@@ -269,7 +269,7 @@ public class AnyKeyboardViewWithMiniKeyboardTest extends AnyKeyboardViewBaseTest
 
     Assert.assertEquals(0, key.getPrimaryCode());
     Assert.assertEquals(0, key.getCodesCount());
-    Assert.assertEquals(R.xml.popup_16keys_wxyz, key.popupResId);
+    Assert.assertEquals(R.xml.popup_qwerty_e, key.popupResId);
     Assert.assertEquals("a", key.label);
     Assert.assertNull(key.popupCharacters);
 
@@ -351,7 +351,7 @@ public class AnyKeyboardViewWithMiniKeyboardTest extends AnyKeyboardViewBaseTest
 
     Assert.assertEquals(0, key.getPrimaryCode());
     Assert.assertEquals(0, key.getCodesCount());
-    Assert.assertEquals(R.xml.popup_16keys_wxyz, key.popupResId);
+    Assert.assertEquals(R.xml.popup_qwerty_e, key.popupResId);
     Assert.assertEquals("popup", key.label);
     Assert.assertNull(key.popupCharacters);
 
@@ -394,7 +394,7 @@ public class AnyKeyboardViewWithMiniKeyboardTest extends AnyKeyboardViewBaseTest
 
     Assert.assertEquals(0, key.getPrimaryCode());
     Assert.assertEquals(0, key.getCodesCount());
-    Assert.assertEquals(R.xml.popup_16keys_wxyz, key.popupResId);
+    Assert.assertEquals(R.xml.popup_qwerty_e, key.popupResId);
     Assert.assertEquals("popup", key.label);
     Assert.assertNull(key.popupCharacters);
 
@@ -520,7 +520,7 @@ public class AnyKeyboardViewWithMiniKeyboardTest extends AnyKeyboardViewBaseTest
     final Keyboard.Key key = findKey('w');
     key.popupCharacters = null;
     key.externalResourcePopupLayout = true;
-    key.popupResId = R.xml.popup_16keys_abc;
+    key.popupResId = R.xml.popup_qwerty_e;
     mViewUnderTest.onLongPress(
         mEnglishKeyboard.getKeyboardAddOn(), key, false, mMockPointerTracker);
 
@@ -535,7 +535,7 @@ public class AnyKeyboardViewWithMiniKeyboardTest extends AnyKeyboardViewBaseTest
     final Keyboard.Key key = findKey('w');
     key.popupCharacters = null;
     key.externalResourcePopupLayout = false;
-    key.popupResId = R.xml.popup_16keys_abc;
+    key.popupResId = R.xml.popup_qwerty_e;
     mViewUnderTest.onLongPress(
         mEnglishKeyboard.getKeyboardAddOn(), key, false, mMockPointerTracker);
 

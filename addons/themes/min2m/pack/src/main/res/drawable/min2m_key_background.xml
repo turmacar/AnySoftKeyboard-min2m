@@ -18,13 +18,13 @@
     <item ask:key_type_function="true" android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="7dp" />
-            <solid android:color="@color/min2m_color_space_accent_pressed" />
+            <solid android:color="@color/min2m_color_key_function_pressed" />
         </shape>
     </item>
     <item ask:key_type_function="true">
         <shape android:shape="rectangle">
             <corners android:radius="7dp" />
-            <solid android:color="@color/min2m_color_space_accent" />
+            <solid android:color="@color/min2m_color_key_function" />
         </shape>
     </item>
 
