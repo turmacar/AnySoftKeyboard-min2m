@@ -30,11 +30,13 @@ import com.anysoftkeyboard.dictionaries.DictionaryBackgroundLoader;
 import com.anysoftkeyboard.dictionaries.Suggest;
 import com.anysoftkeyboard.dictionaries.SuggestImpl;
 import com.anysoftkeyboard.dictionaries.WordComposer;
+import com.anysoftkeyboard.dictionaries.min2m.Min2mSuggest;
 import com.anysoftkeyboard.keyboards.AnyKeyboard;
 import com.anysoftkeyboard.keyboards.Keyboard;
 import com.anysoftkeyboard.keyboards.KeyboardSwitcher;
 import com.anysoftkeyboard.keyboards.views.CandidateView;
 import com.anysoftkeyboard.keyboards.views.KeyboardViewContainerView;
+import com.anysoftkeyboard.prefs.DirectBootAwareSharedPreferences;
 import com.anysoftkeyboard.rx.GenericOnError;
 import com.anysoftkeyboard.rx.RxSchedulers;
 import com.anysoftkeyboard.utils.IMEUtil;
@@ -1018,6 +1020,15 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
   @NonNull
   protected Suggest createSuggest() {
+    final String engine =
+        DirectBootAwareSharedPreferences.create(this)
+            .getString("settings_key_suggestion_engine", "ask");
+    Logger.i("ASKSuggestions", "createSuggest: engine pref = '%s'", engine);
+    if ("min2m".equals(engine)) {
+      Logger.i("ASKSuggestions", "Creating Min2m suggestion engine");
+      return new Min2mSuggest(this);
+    }
+    Logger.i("ASKSuggestions", "Creating standard ASK suggestion engine");
     return new SuggestImpl(this);
   }
 

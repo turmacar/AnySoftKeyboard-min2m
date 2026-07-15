@@ -58,3 +58,6 @@ scratch/
 *.local.md
 scripts/*
 scripts/deploy-local-app-addon.sh
+
+# local tooling venv
+.venv-tools/
