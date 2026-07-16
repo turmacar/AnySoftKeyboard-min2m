@@ -322,24 +322,7 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
 
     updateShiftStateNow();
 
-    mMin2mCompactActive = isCompactKeyboardWithoutShift();
-    if (mMin2mCompactActive) {
-      getInputViewContainer().setCompactMode(true);
-      if (mShiftStripAction == null) {
-        mShiftStripAction = new ShiftStripActionProvider(this);
-      }
-      if (mBackspaceStripAction == null) {
-        mBackspaceStripAction = new BackspaceStripActionProvider(this);
-      }
-      getInputViewContainer().addLeftStripAction(mShiftStripAction);
-      // Backspace added first so it occupies the rightmost position
-      getInputViewContainer().addStripAction(mBackspaceStripAction, false);
-      // Apply themed icons from the keyboard view
-      if (inputView instanceof AnyKeyboardView kbdView) {
-        mShiftStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.SHIFT));
-        mBackspaceStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.DELETE));
-      }
-    }
+    updateCompactStripActions();
 
     if (BuildConfig.DEBUG) {
       getInputViewContainer().addStripAction(mDevToolsAction, false);
@@ -799,6 +782,41 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
     super.onAlphabetKeyboardSet(keyboard);
     setKeyboardFinalStuff();
     mKeyboardAutoCap = keyboard.autoCap;
+    updateCompactStripActions();
+  }
+
+  private void updateCompactStripActions() {
+    boolean shouldBeCompact = isCompactKeyboardWithoutShift();
+    if (shouldBeCompact == mMin2mCompactActive) return;
+
+    var container = getInputViewContainer();
+    if (container == null) return;
+
+    if (shouldBeCompact) {
+      container.setCompactMode(true);
+      if (mShiftStripAction == null) {
+        mShiftStripAction = new ShiftStripActionProvider(this);
+      }
+      if (mBackspaceStripAction == null) {
+        mBackspaceStripAction = new BackspaceStripActionProvider(this);
+      }
+      container.addLeftStripAction(mShiftStripAction);
+      container.addRightStripAction(mBackspaceStripAction);
+      InputViewBinder inputView = getInputView();
+      if (inputView instanceof AnyKeyboardView kbdView) {
+        mShiftStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.SHIFT));
+        mBackspaceStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.DELETE));
+      }
+    } else {
+      if (mShiftStripAction != null) {
+        container.removeStripAction(mShiftStripAction);
+      }
+      if (mBackspaceStripAction != null) {
+        container.removeStripAction(mBackspaceStripAction);
+      }
+      container.setCompactMode(false);
+    }
+    mMin2mCompactActive = shouldBeCompact;
   }
 
   @Override

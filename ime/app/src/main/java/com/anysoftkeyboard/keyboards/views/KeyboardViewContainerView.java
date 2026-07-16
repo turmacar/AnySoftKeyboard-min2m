@@ -27,13 +27,20 @@ import net.evendanan.pixel.MainChild;
 public class KeyboardViewContainerView extends ViewGroup implements ThemeableChild {
 
   private static final int PROVIDER_TAG_ID = R.id.keyboard_container_provider_tag_id;
+  private static final int LEFT_PROVIDER_TAG_ID = R.id.keyboard_container_left_provider_tag_id;
+  private static final int RIGHT_PROVIDER_TAG_ID = R.id.keyboard_container_right_provider_tag_id;
+  private static final int TOP_PROVIDER_TAG_ID = R.id.keyboard_container_top_provider_tag_id;
   private static final int FIRST_PROVIDER_VIEW_INDEX = 2;
 
   private static final boolean SHOW_CLICKS = BuildConfig.DEBUG && false;
 
   private final int mActionStripHeight;
   private final List<View> mStripActionViews = new ArrayList<>();
+  private final List<View> mLeftStripActionViews = new ArrayList<>();
+  private final List<View> mRightStripActionViews = new ArrayList<>();
+  private final List<View> mTopStripActionViews = new ArrayList<>();
   private boolean mShowActionStrip = true;
+  private boolean mCompactMode = false;
   private InputViewBinder mStandardKeyboardView;
   private CandidateView mCandidateView;
   private OnKeyboardActionListener mKeyboardActionListener;
@@ -144,7 +151,36 @@ public class KeyboardViewContainerView extends ViewGroup implements ThemeableChi
 
         for (View stripActionView : mStripActionViews) {
           if (visible) {
-            // it might already be visible
+            if (stripActionView.getParent() == null) {
+              addView(stripActionView);
+            }
+          } else {
+            removeView(stripActionView);
+          }
+        }
+
+        for (View stripActionView : mLeftStripActionViews) {
+          if (visible) {
+            if (stripActionView.getParent() == null) {
+              addView(stripActionView);
+            }
+          } else {
+            removeView(stripActionView);
+          }
+        }
+
+        for (View stripActionView : mRightStripActionViews) {
+          if (visible) {
+            if (stripActionView.getParent() == null) {
+              addView(stripActionView);
+            }
+          } else {
+            removeView(stripActionView);
+          }
+        }
+
+        for (View stripActionView : mTopStripActionViews) {
+          if (visible) {
             if (stripActionView.getParent() == null) {
               addView(stripActionView);
             }
@@ -158,7 +194,16 @@ public class KeyboardViewContainerView extends ViewGroup implements ThemeableChi
     }
   }
 
+  public void setCompactMode(boolean compact) {
+    mCompactMode = compact;
+  }
+
   public void addStripAction(@NonNull StripActionProvider provider, boolean highPriority) {
+    // In compact mode, redirect high-priority strip actions to the top row
+    if (mCompactMode && highPriority) {
+      addTopStripAction(provider);
+      return;
+    }
     for (var stripActionView : mStripActionViews) {
       if (stripActionView.getTag(PROVIDER_TAG_ID) == provider) {
         return;
@@ -186,12 +231,96 @@ public class KeyboardViewContainerView extends ViewGroup implements ThemeableChi
     invalidate();
   }
 
+  public void addLeftStripAction(@NonNull StripActionProvider provider) {
+    for (var stripActionView : mLeftStripActionViews) {
+      if (stripActionView.getTag(LEFT_PROVIDER_TAG_ID) == provider) {
+        return;
+      }
+    }
+
+    var actionView = provider.inflateActionView(this);
+    if (actionView.getParent() != null)
+      throw new IllegalStateException("StripActionProvider inflated a view with a parent!");
+    actionView.setTag(LEFT_PROVIDER_TAG_ID, provider);
+    if (mShowActionStrip) {
+      addView(actionView);
+    }
+
+    mLeftStripActionViews.add(actionView);
+    invalidate();
+  }
+
+  public void addTopStripAction(@NonNull StripActionProvider provider) {
+    for (var stripActionView : mTopStripActionViews) {
+      if (stripActionView.getTag(TOP_PROVIDER_TAG_ID) == provider) {
+        return;
+      }
+    }
+
+    var actionView = provider.inflateActionView(this);
+    if (actionView.getParent() != null)
+      throw new IllegalStateException("StripActionProvider inflated a view with a parent!");
+    actionView.setTag(TOP_PROVIDER_TAG_ID, provider);
+    if (mShowActionStrip) {
+      addView(actionView, FIRST_PROVIDER_VIEW_INDEX);
+    }
+
+    mTopStripActionViews.add(actionView);
+    invalidate();
+  }
+
+  public void addRightStripAction(@NonNull StripActionProvider provider) {
+    for (var stripActionView : mRightStripActionViews) {
+      if (stripActionView.getTag(RIGHT_PROVIDER_TAG_ID) == provider) {
+        return;
+      }
+    }
+
+    var actionView = provider.inflateActionView(this);
+    if (actionView.getParent() != null)
+      throw new IllegalStateException("StripActionProvider inflated a view with a parent!");
+    actionView.setTag(RIGHT_PROVIDER_TAG_ID, provider);
+    if (mShowActionStrip) {
+      addView(actionView);
+    }
+
+    mRightStripActionViews.add(actionView);
+    invalidate();
+  }
+
   public void removeStripAction(@NonNull StripActionProvider provider) {
     for (var stripActionView : mStripActionViews) {
       if (stripActionView.getTag(PROVIDER_TAG_ID) == provider) {
         removeView(stripActionView);
         provider.onRemoved();
         mStripActionViews.remove(stripActionView);
+        invalidate();
+        return;
+      }
+    }
+    for (var stripActionView : mLeftStripActionViews) {
+      if (stripActionView.getTag(LEFT_PROVIDER_TAG_ID) == provider) {
+        removeView(stripActionView);
+        provider.onRemoved();
+        mLeftStripActionViews.remove(stripActionView);
+        invalidate();
+        return;
+      }
+    }
+    for (var stripActionView : mRightStripActionViews) {
+      if (stripActionView.getTag(RIGHT_PROVIDER_TAG_ID) == provider) {
+        removeView(stripActionView);
+        provider.onRemoved();
+        mRightStripActionViews.remove(stripActionView);
+        invalidate();
+        return;
+      }
+    }
+    for (var stripActionView : mTopStripActionViews) {
+      if (stripActionView.getTag(TOP_PROVIDER_TAG_ID) == provider) {
+        removeView(stripActionView);
+        provider.onRemoved();
+        mTopStripActionViews.remove(stripActionView);
         invalidate();
         return;
       }
@@ -204,22 +333,75 @@ public class KeyboardViewContainerView extends ViewGroup implements ThemeableChi
     final int left = l + getPaddingLeft();
     final int right = r - getPaddingRight();
     int currentTop = t + getPaddingTop();
-    final int actionsTop = t + getPaddingTop();
-    int actionRight = r - getPaddingRight();
+
+    // First pass: layout top strip actions in their own row above the candidate bar
     for (int i = 0; i < count; i++) {
       final View child = getChildAt(i);
       if (child.getVisibility() == View.GONE) continue;
-      if (child.getTag(PROVIDER_TAG_ID) == null) {
+      if (child.getTag(TOP_PROVIDER_TAG_ID) != null) {
         child.layout(left, currentTop, right, currentTop + child.getMeasuredHeight());
         currentTop += child.getMeasuredHeight();
-      } else {
-        // this is an action. It lives on the candidates-view
+      }
+    }
+
+    // Second pass: calculate left-pinned width for candidate sandwiching
+    final int actionsTop = currentTop;
+    int actionRight = r - getPaddingRight();
+    int actionLeft = l + getPaddingLeft();
+    int leftPinnedWidth = 0;
+    int rightPinnedWidth = 0;
+    for (int i = 0; i < count; i++) {
+      final View child = getChildAt(i);
+      if (child.getVisibility() == View.GONE) continue;
+      if (child.getTag(LEFT_PROVIDER_TAG_ID) != null) {
+        leftPinnedWidth += child.getMeasuredWidth();
+      } else if (child.getTag(RIGHT_PROVIDER_TAG_ID) != null) {
+        rightPinnedWidth += child.getMeasuredWidth();
+      }
+    }
+
+    // Layout right-edge pinned actions first (far right, immovable)
+    for (int i = 0; i < count; i++) {
+      final View child = getChildAt(i);
+      if (child.getVisibility() == View.GONE) continue;
+      if (child.getTag(RIGHT_PROVIDER_TAG_ID) != null) {
         child.layout(
             actionRight - child.getMeasuredWidth(),
             actionsTop,
             actionRight,
             actionsTop + child.getMeasuredHeight());
         actionRight -= child.getMeasuredWidth();
+      }
+    }
+
+    // Third pass: layout candidate, left/right strip actions, and keyboard
+    for (int i = 0; i < count; i++) {
+      final View child = getChildAt(i);
+      if (child.getVisibility() == View.GONE) continue;
+      if (child.getTag(TOP_PROVIDER_TAG_ID) != null) {
+        // already laid out above
+      } else if (child.getTag(RIGHT_PROVIDER_TAG_ID) != null) {
+        // already laid out above
+      } else if (child.getTag(LEFT_PROVIDER_TAG_ID) != null) {
+        child.layout(
+            actionLeft,
+            actionsTop,
+            actionLeft + child.getMeasuredWidth(),
+            actionsTop + child.getMeasuredHeight());
+        actionLeft += child.getMeasuredWidth();
+      } else if (child.getTag(PROVIDER_TAG_ID) != null) {
+        child.layout(
+            actionRight - child.getMeasuredWidth(),
+            actionsTop,
+            actionRight,
+            actionsTop + child.getMeasuredHeight());
+        actionRight -= child.getMeasuredWidth();
+      } else if (child == mCandidateView) {
+        child.layout(left + leftPinnedWidth, currentTop, right - rightPinnedWidth, currentTop + child.getMeasuredHeight());
+        currentTop += child.getMeasuredHeight();
+      } else {
+        child.layout(left, currentTop, right, currentTop + child.getMeasuredHeight());
+        currentTop += child.getMeasuredHeight();
       }
     }
     // setting up the extra-offset for the main-keyboard
@@ -234,12 +416,41 @@ public class KeyboardViewContainerView extends ViewGroup implements ThemeableChi
     int totalWidth = 0;
     int totalHeight = mCandidateView.getVisibility() == View.VISIBLE ? mActionStripHeight : 0;
     final int count = getChildCount();
+
+    // First pass: measure strip actions and calculate consumed width
+    int leftPinnedWidth = 0;
+    int rightPinnedWidth = 0;
     for (int i = 0; i < count; i++) {
       final View child = getChildAt(i);
       if (child.getVisibility() == View.GONE) continue;
-      if (child.getTag(PROVIDER_TAG_ID) != null || child == mCandidateView) {
-        // this is an action. we just need to make sure it is measured.
+      if (child.getTag(LEFT_PROVIDER_TAG_ID) != null) {
         measureChild(child, widthMeasureSpec, heightMeasureSpec);
+        leftPinnedWidth += child.getMeasuredWidth();
+      } else if (child.getTag(PROVIDER_TAG_ID) != null) {
+        measureChild(child, widthMeasureSpec, heightMeasureSpec);
+        rightPinnedWidth += child.getMeasuredWidth();
+      } else if (child.getTag(RIGHT_PROVIDER_TAG_ID) != null) {
+        measureChild(child, widthMeasureSpec, heightMeasureSpec);
+        rightPinnedWidth += child.getMeasuredWidth();
+      } else if (child.getTag(TOP_PROVIDER_TAG_ID) != null) {
+        measureChild(child, widthMeasureSpec, heightMeasureSpec);
+        totalHeight += child.getMeasuredHeight();
+      }
+    }
+
+    // Second pass: measure CandidateView with reduced width, and other children
+    int parentWidth = MeasureSpec.getSize(widthMeasureSpec);
+    int candidateWidth = parentWidth - leftPinnedWidth - rightPinnedWidth;
+    for (int i = 0; i < count; i++) {
+      final View child = getChildAt(i);
+      if (child.getVisibility() == View.GONE) continue;
+      if (child.getTag(PROVIDER_TAG_ID) != null || child.getTag(LEFT_PROVIDER_TAG_ID) != null
+          || child.getTag(RIGHT_PROVIDER_TAG_ID) != null
+          || child.getTag(TOP_PROVIDER_TAG_ID) != null) {
+        // already measured above
+      } else if (child == mCandidateView) {
+        int candidateMeasureSpec = MeasureSpec.makeMeasureSpec(candidateWidth, MeasureSpec.EXACTLY);
+        measureChild(child, candidateMeasureSpec, heightMeasureSpec);
       } else {
         measureChild(child, widthMeasureSpec, heightMeasureSpec);
         totalWidth = Math.max(totalWidth, child.getMeasuredWidth());
