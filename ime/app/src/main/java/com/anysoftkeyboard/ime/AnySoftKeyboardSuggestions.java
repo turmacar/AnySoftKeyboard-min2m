@@ -146,7 +146,7 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
                 R.string.settings_key_suggestion_engine,
                 R.string.settings_default_suggestion_engine)
             .asObservable()
-            .skip(1) // skip initial emission — already handled by createSuggest()
+            .skip(1) // skip initial emission - already handled by createSuggest()
             .subscribe(
                 engine -> {
                   Logger.i("ASKSuggestions", "Suggestion engine pref changed to '%s', recreating", engine);

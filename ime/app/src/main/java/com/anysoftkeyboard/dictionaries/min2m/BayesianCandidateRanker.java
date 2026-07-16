@@ -33,13 +33,18 @@ public class BayesianCandidateRanker {
    *
    * @param frequency the word's corpus frequency from vocab.db
    * @param spatialLogP the spatial log-likelihood from SpatialScorer (negative; higher = better)
+   * @param candidateLength the candidate word length in codepoints
    * @return combined score (higher is better)
    */
-  public float score(int frequency, float spatialLogP) {
+  public float score(int frequency, float spatialLogP, int candidateLength) {
     // logPrior = ln(frequency / maxFrequency)   [range: ~−15 to 0]
     float logFreqPrior = (float) Math.log((double) frequency / mMaxFrequency);
-    // score = α × logPrior + β × logP(touches | word)
-    return mAlpha * logFreqPrior + mBeta * spatialLogP;
+    // Normalize spatial score per character so longer words don't get
+    // penalized just for having more characters to evaluate.
+    // spatialPerChar = spatialLogP / N   [range: ~−5 to 0 per char]
+    float spatialPerChar = candidateLength > 0 ? spatialLogP / candidateLength : spatialLogP;
+    // score = α × logPrior + β × spatialPerChar
+    return mAlpha * logFreqPrior + mBeta * spatialPerChar;
   }
 
   /**
@@ -61,9 +66,14 @@ public class BayesianCandidateRanker {
    * @return integer priority for insertion into the suggestion list
    */
   public static int toIntPriority(float score) {
-    // sigmoid(x) = 1 / (1 + e^(−(score + 10)))   [centered at score = −10]
-    double normalized = 1.0 / (1.0 + Math.exp(-(score + 10.0)));
-    // priority = 1 + sigmoid × (MAX_VALUE/2 − 2)   [maps to int range 1..MAX_VALUE/2−1]
+    // Linear mapping from score range [-20, 0] to int range [1, MAX_VALUE/2 - 1].
+    // Scores below -20 clamp to 1, scores above 0 clamp to MAX_VALUE/2 - 1.
+    // This preserves the relative differences between scores, unlike sigmoid
+    // which compresses the useful range (-5 to 0) into <1% of the output.
+    //
+    // priority = clamp((score + 20) / 20, 0, 1) × (MAX_VALUE/2 - 2) + 1
+    double clamped = Math.max(-20.0, Math.min(0.0, score));
+    double normalized = (clamped + 20.0) / 20.0;
     return 1 + (int) (normalized * (Integer.MAX_VALUE / 2 - 2));
   }
 }

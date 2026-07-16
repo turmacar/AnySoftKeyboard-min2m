@@ -446,6 +446,16 @@ public class SuggestionsProvider {
     allDictionariesGetWords(mMainDictionary, wordComposer, wordCallback);
   }
 
+  /**
+   * Queries only user-learned words and contacts — no main dictionary.
+   * Used by Min2mSuggest which has its own vocabulary and scoring.
+   */
+  public void getUserAndContactsSuggestions(
+      KeyCodesProvider wordComposer, Dictionary.WordCallback wordCallback) {
+    mContactsDictionary.getSuggestions(wordComposer, wordCallback);
+    allDictionariesGetWords(mUserDictionary, wordComposer, wordCallback);
+  }
+
   public void getAbbreviations(
       KeyCodesProvider wordComposer, Dictionary.WordCallback wordCallback) {
     allDictionariesGetWords(mAbbreviationDictionary, wordComposer, wordCallback);
