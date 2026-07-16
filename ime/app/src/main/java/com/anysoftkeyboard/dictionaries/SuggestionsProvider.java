@@ -447,7 +447,7 @@ public class SuggestionsProvider {
   }
 
   /**
-   * Queries only user-learned words and contacts — no main dictionary.
+   * Queries only user-learned words and contacts - no main dictionary.
    * Used by Min2mSuggest which has its own vocabulary and scoring.
    */
   public void getUserAndContactsSuggestions(

@@ -41,6 +41,7 @@ public class Min2mSuggest implements Suggest {
   @NonNull private final SuggestionsProvider mSuggestionsProvider;
   @NonNull private final Min2mVocabulary mVocabulary;
   @NonNull private final SpatialScorer mSpatialScorer;
+  @NonNull private final HMMScorer mHmmScorer;
   @NonNull private final BayesianCandidateRanker mRanker;
   @NonNull private final Context mContext;
 
@@ -63,6 +64,7 @@ public class Min2mSuggest implements Suggest {
     mSuggestionsProvider = new SuggestionsProvider(context);
     mVocabulary = new Min2mVocabulary();
     mSpatialScorer = new SpatialScorer();
+    mHmmScorer = new HMMScorer(mSpatialScorer);
     mRanker = new BayesianCandidateRanker();
     setMaxSuggestions(mPrefMaxSuggestions);
 
@@ -84,6 +86,7 @@ public class Min2mSuggest implements Suggest {
     mSuggestionsProvider = provider;
     mVocabulary = vocabulary;
     mSpatialScorer = new SpatialScorer();
+    mHmmScorer = new HMMScorer(mSpatialScorer);
     mRanker = new BayesianCandidateRanker();
     setMaxSuggestions(mPrefMaxSuggestions);
   }
@@ -219,24 +222,13 @@ public class Min2mSuggest implements Suggest {
 
     if (mVocabulary.isOpen()) {
       // --- Step 1: Generate candidate pool ---
-      // Find all plausible first characters within spatial range of first touch.
+      // Include all 26 letters as first-char candidates. The HMM scorer
+      // handles ranking by spatial distance -- pre-filtering by first-char
+      // position was too aggressive on compact keyboards where 'c' and 'q'
+      // are far apart but both plausible for a given touch position.
       java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
-      if (hasTouchData && touchCount >= 1) {
-        float touchX0 = wordComposer.getTouchX(0);
-        float touchY0 = wordComposer.getTouchY(0);
-        float threshold = mSpatialScorer.getAvgKeyWidth() * 4f;
-        float thresholdSq = threshold * threshold;
-
-        for (int ch = 'a'; ch <= 'z'; ch++) {
-          float[] center = mSpatialScorer.getKeyCenter(ch);
-          if (center != null) {
-            float dx = touchX0 - center[0];
-            float dy = touchY0 - center[1];
-            if (dx * dx + dy * dy <= thresholdSq) {
-              firstCharCandidates.add((char) ch);
-            }
-          }
-        }
+      for (char ch = 'a'; ch <= 'z'; ch++) {
+        firstCharCandidates.add(ch);
       }
 
       List<Min2mVocabulary.CandidateWord> candidates = mVocabulary.getSpatialCandidates(
@@ -271,7 +263,7 @@ public class Min2mSuggest implements Suggest {
         }
 
         float spatialLogP = hasTouchData
-            ? mSpatialScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
+            ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
             : 0f;
         int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
         float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
@@ -301,15 +293,12 @@ public class Min2mSuggest implements Suggest {
 
     // --- Step 4: Auto-correction ---
     // Auto-correct to position 1 only if it scored higher than the typed word.
-    // If the typed word IS the spatial winner (e.g., user typed "see" correctly
-    // and it has the best spatial score), don't auto-correct away from it.
+    // If the typed word IS the spatial winner (e.g., user typed "I" correctly
+    // and it has the best spatial+frequency score), don't auto-correct away.
     if (mSuggestions.size() > 1 && mPriorities[1] > 0) {
       if (typedWordSpatialPriority < 0 || mPriorities[1] > typedWordSpatialPriority) {
-        // Position 1 scored better than the typed word (or typed word isn't
-        // in vocabulary at all) - auto-correct to the spatial winner.
         mCorrectSuggestionIndex = 1;
       }
-      // else: typed word IS the spatial winner - no auto-correction needed.
     }
 
     IMEUtil.removeDupes(mSuggestions, mStringPool);

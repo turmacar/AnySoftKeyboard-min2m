@@ -76,14 +76,13 @@ public class BayesianCandidateRanker {
    * @return integer priority for insertion into the suggestion list
    */
   public static int toIntPriority(float score) {
-    // Linear mapping from score range [-30, 0] to int range [1, MAX_VALUE/2 - 1].
-    // Wider range than before (-30 vs -20) because spatial scores are no longer
-    // normalized per character, so raw sums can be larger in magnitude.
-    // Scores below -30 clamp to 1, scores above 0 clamp to MAX_VALUE/2 - 1.
-    //
-    // priority = clamp((score + 30) / 30, 0, 1) × (MAX_VALUE/2 - 2) + 1
-    double clamped = Math.max(-30.0, Math.min(0.0, score));
-    double normalized = (clamped + 30.0) / 30.0;
+    // Linear mapping from score range [-60, 0] to int range [1, MAX_VALUE/2 - 1].
+    // Wide range to accommodate long words where the HMM accumulates per-character
+    // spatial penalties. A 14-char word with moderate spatial distance per char
+    // can score -20 to -40 total (spatial + frequency combined).
+    // Scores below -60 clamp to 1, scores above 0 clamp to MAX_VALUE/2 - 1.
+    double clamped = Math.max(-60.0, Math.min(0.0, score));
+    double normalized = (clamped + 60.0) / 60.0;
     return 1 + (int) (normalized * (Integer.MAX_VALUE / 2 - 2));
   }
 }

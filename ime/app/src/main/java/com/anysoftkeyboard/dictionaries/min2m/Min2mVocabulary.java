@@ -280,7 +280,8 @@ public class Min2mVocabulary {
    * Returns candidate words for spatial disambiguation. Combines:
    * 1. Prefix completions of the typed word
    * 2. Same-length words starting with any nearby first character
-   * 3. ±1 length words for edit-distance correction (missed/extra keystroke)
+   * 3. +/-1 length words for edit-distance correction (missed/extra keystroke)
+   * 4. Apostrophe-containing words matching the prefix (e.g., "I'm", "don't")
    *
    * All lookups are in-memory - no disk I/O.
    */
@@ -305,15 +306,10 @@ public class Min2mVocabulary {
     }
 
     // Part 2: Same-length words starting with any nearby first character
-    // Part 3: ±1 length words for edit-distance correction
-    //   - length-1: user hit an extra key (e.g., "teh" → "the", "helllo" → "hello")
-    //   - length+1: user missed a key (e.g., "helo" → "hello", "te" → "the")
+    // Part 3: +/-1 length words for edit-distance correction
     if (wordLength >= 1 && !firstChars.isEmpty()) {
-      // Use a generous per-character limit - we're in-memory so iterating
-      // more candidates is cheap, and the spatial scorer handles ranking.
-      int perCharLimit = 20;
-      // Fewer candidates for ±1 lengths since they're less likely corrections
-      int editDistPerCharLimit = 10;
+      int perCharLimit = 50;
+      int editDistPerCharLimit = 20;
 
       for (int len = wordLength - 1; len <= wordLength + 1; len++) {
         if (len < 1) continue;
@@ -328,6 +324,28 @@ public class Min2mVocabulary {
           for (CandidateWord word : bucket) {
             if (added >= charLimit) break;
             if (seen.add(word.text)) {
+              results.add(word);
+              added++;
+            }
+          }
+        }
+      }
+
+      // Part 4: Apostrophe-containing words.
+      // Words like "I'm", "don't", "let's" are indexed by their full length
+      // (including apostrophe) and first letter. Also search lengths that account
+      // for the apostrophe: typed length + 2 (apostrophe + one more char, e.g.,
+      // typing "im" should find "i'm", typing "dont" should find "don't").
+      for (int len = wordLength + 1; len <= wordLength + 2; len++) {
+        Map<Character, List<CandidateWord>> byChar = mByLengthAndFirstChar.get(len);
+        if (byChar == null) continue;
+        for (char fc : firstChars) {
+          List<CandidateWord> bucket = byChar.get(fc);
+          if (bucket == null) continue;
+          int added = 0;
+          for (CandidateWord word : bucket) {
+            if (added >= 10) break;
+            if (word.text.indexOf('\'') >= 0 && seen.add(word.text)) {
               results.add(word);
               added++;
             }

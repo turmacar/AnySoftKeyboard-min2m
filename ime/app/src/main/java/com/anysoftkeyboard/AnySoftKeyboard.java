@@ -59,6 +59,8 @@ import com.anysoftkeyboard.prefs.AnimationsLevel;
 import com.anysoftkeyboard.rx.GenericOnError;
 import com.anysoftkeyboard.ui.VoiceInputNotInstalledActivity;
 import com.anysoftkeyboard.ui.dev.DevStripActionProvider;
+import com.anysoftkeyboard.keyboards.views.ShiftStripActionProvider;
+import com.anysoftkeyboard.keyboards.views.BackspaceStripActionProvider;
 import com.anysoftkeyboard.ui.dev.DeveloperUtils;
 import com.anysoftkeyboard.ui.settings.MainSettingsActivity;
 import com.anysoftkeyboard.utils.IMEUtil;
@@ -85,6 +87,9 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
   @NonNull private final SparseArrayCompat<int[]> mSpecialWrapCharacters;
 
   private DevStripActionProvider mDevToolsAction;
+  private ShiftStripActionProvider mShiftStripAction;
+  private BackspaceStripActionProvider mBackspaceStripAction;
+  private boolean mMin2mCompactActive;
   private CondenseType mPrefKeyboardInCondensedLandscapeMode = CondenseType.None;
   private CondenseType mPrefKeyboardInCondensedPortraitMode = CondenseType.None;
   private CondenseType mKeyboardInCondensedMode = CondenseType.None;
@@ -246,6 +251,11 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
     mDevToolsAction = new DevStripActionProvider(this);
   }
 
+  private boolean isCompactKeyboardWithoutShift() {
+    var keyboard = getCurrentKeyboard();
+    return keyboard != null && keyboard.getShiftKey() == null;
+  }
+
   @Override
   public void onDestroy() {
     Logger.i(TAG, "AnySoftKeyboard has been destroyed! Cleaning resources..");
@@ -312,6 +322,25 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
 
     updateShiftStateNow();
 
+    mMin2mCompactActive = isCompactKeyboardWithoutShift();
+    if (mMin2mCompactActive) {
+      getInputViewContainer().setCompactMode(true);
+      if (mShiftStripAction == null) {
+        mShiftStripAction = new ShiftStripActionProvider(this);
+      }
+      if (mBackspaceStripAction == null) {
+        mBackspaceStripAction = new BackspaceStripActionProvider(this);
+      }
+      getInputViewContainer().addLeftStripAction(mShiftStripAction);
+      // Backspace added first so it occupies the rightmost position
+      getInputViewContainer().addStripAction(mBackspaceStripAction, false);
+      // Apply themed icons from the keyboard view
+      if (inputView instanceof AnyKeyboardView kbdView) {
+        mShiftStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.SHIFT));
+        mBackspaceStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.DELETE));
+      }
+    }
+
     if (BuildConfig.DEBUG) {
       getInputViewContainer().addStripAction(mDevToolsAction, false);
     }
@@ -334,6 +363,16 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
     getInputView().resetInputView();
     if (BuildConfig.DEBUG) {
       getInputViewContainer().removeStripAction(mDevToolsAction);
+    }
+    if (mMin2mCompactActive) {
+      if (mShiftStripAction != null) {
+        getInputViewContainer().removeStripAction(mShiftStripAction);
+      }
+      if (mBackspaceStripAction != null) {
+        getInputViewContainer().removeStripAction(mBackspaceStripAction);
+      }
+      getInputViewContainer().setCompactMode(false);
+      mMin2mCompactActive = false;
     }
   }
 
@@ -658,7 +697,14 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
           int[] wrapCharacters = mSpecialWrapCharacters.get(primaryCode);
           wrapSelectionWithCharacters(wrapCharacters[0], wrapCharacters[1]);
         } else if (isWordSeparator(primaryCode)) {
-          handleSeparator(primaryCode);
+          // Apostrophe inside a word should not break it when using min2m engine.
+          // Words like "I'm", "don't", "let's" need apostrophe as an inner char.
+          if (primaryCode == '\'' && isCurrentlyPredicting()
+              && getSuggest() instanceof com.anysoftkeyboard.dictionaries.min2m.Min2mSuggest) {
+            handleCharacter(primaryCode, key, multiTapIndex, nearByKeyCodes);
+          } else {
+            handleSeparator(primaryCode);
+          }
         } else if (mControlKeyState.isActive()) {
           int keyCode = getKeyCode(primaryCode);
           if (keyCode != 0) {

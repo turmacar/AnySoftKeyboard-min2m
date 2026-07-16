@@ -699,7 +699,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     CharSequence wordToOutput = typedWord.getTypedWord();
     // ACTION does not invoke default picking. See
     // https://github.com/AnySoftKeyboard/AnySoftKeyboard/issues/198
-    if (isAutoCorrect() && !newLine /*we do not auto-pick on ENTER.*/) {
+    // Exception: min2m engine uses spatial scoring as the primary decoder,
+    // so enter should commit the auto-correct just like space.
+    if (isAutoCorrect() && (!newLine || mSuggest instanceof Min2mSuggest)) {
       if (!TextUtils.equals(wordToOutput, typedWord.getPreferredWord())) {
         wordToOutput = typedWord.getPreferredWord();
       }
