@@ -1,12 +1,10 @@
 package com.anysoftkeyboard.keyboards.views;
 
-import android.graphics.drawable.Drawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import com.menny.android.anysoftkeyboard.R;
 
 public class ShiftStripActionProvider implements KeyboardViewContainerView.StripActionProvider {
@@ -24,6 +22,7 @@ public class ShiftStripActionProvider implements KeyboardViewContainerView.Strip
         LayoutInflater.from(parent.getContext())
             .inflate(R.layout.shift_strip_action, parent, false);
     mShiftIcon = root.findViewById(R.id.shift_strip_action_icon);
+    mShiftIcon.setImageResource(R.drawable.ic_shift_off);
     root.setOnClickListener(
         v -> {
           mKeyboardActionListener.onPress(com.anysoftkeyboard.api.KeyCodes.SHIFT);
@@ -32,20 +31,14 @@ public class ShiftStripActionProvider implements KeyboardViewContainerView.Strip
     return root;
   }
 
-  public void setIcon(@Nullable Drawable icon) {
-    if (mShiftIcon != null && icon != null) {
-      mShiftIcon.setImageDrawable(icon);
-    }
-  }
-
   public void updateShiftState(boolean shifted, boolean locked) {
     if (mShiftIcon != null) {
       if (locked) {
-        mShiftIcon.setImageLevel(2);
+        mShiftIcon.setImageResource(R.drawable.ic_shift_locked);
       } else if (shifted) {
-        mShiftIcon.setImageLevel(1);
+        mShiftIcon.setImageResource(R.drawable.ic_shift_on);
       } else {
-        mShiftIcon.setImageLevel(0);
+        mShiftIcon.setImageResource(R.drawable.ic_shift_off);
       }
     }
   }

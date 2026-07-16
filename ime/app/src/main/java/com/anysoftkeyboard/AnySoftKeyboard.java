@@ -804,7 +804,6 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
       container.addRightStripAction(mBackspaceStripAction);
       InputViewBinder inputView = getInputView();
       if (inputView instanceof AnyKeyboardView kbdView) {
-        mShiftStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.SHIFT));
         mBackspaceStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.DELETE));
       }
     } else {
@@ -1105,6 +1104,10 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
           mShiftKeyState.isLocked());
       getInputView().setShifted(mShiftKeyState.isActive());
       getInputView().setShiftLocked(mShiftKeyState.isLocked());
+    }
+    // Update the strip action shift icon (1D compact keyboard)
+    if (mShiftStripAction != null) {
+      mShiftStripAction.updateShiftState(mShiftKeyState.isActive(), mShiftKeyState.isLocked());
     }
   }
 

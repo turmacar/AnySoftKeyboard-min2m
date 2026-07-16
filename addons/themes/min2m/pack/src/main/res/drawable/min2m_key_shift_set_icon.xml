@@ -18,15 +18,15 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:ask="http://schemas.android.com/apk/res-auto">
 
-    <!-- checked -->
-    <item android:state_checked="true" ask:key_type_feedback="true" android:drawable="@drawable/sym_keyboard_shift_locked_holo" />
-    <item android:state_checked="true" android:drawable="@drawable/sym_keyboard_shift_locked_holo" />
+    <!-- checked (caps lock) -->
+    <item android:state_checked="true" ask:key_type_feedback="true" android:drawable="@drawable/min2m_shift_vec_locked" />
+    <item android:state_checked="true" android:drawable="@drawable/min2m_shift_vec_locked" />
 
     <!-- pressed -->
-    <item android:state_pressed="true" ask:key_type_feedback="true" android:drawable="@drawable/sym_keyboard_shift_locked_holo" />
-    <item android:state_pressed="true" android:drawable="@drawable/sym_keyboard_shift_locked_holo" />
+    <item android:state_pressed="true" ask:key_type_feedback="true" android:drawable="@drawable/min2m_shift_vec_on" />
+    <item android:state_pressed="true" android:drawable="@drawable/min2m_shift_vec_on" />
     
     <!-- Normal keys -->
-    <item ask:key_type_feedback="true" android:drawable="@drawable/sym_keyboard_shift_holo" />
-    <item android:drawable="@drawable/sym_keyboard_shift_holo" />
+    <item ask:key_type_feedback="true" android:drawable="@drawable/min2m_shift_vec_off" />
+    <item android:drawable="@drawable/min2m_shift_vec_off" />
 </selector>

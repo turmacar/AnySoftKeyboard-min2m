@@ -65,4 +65,7 @@
 
     <color name="aosp_light_background">#DDD</color>
     <color name="aosp_light_suggestions_background">#AAA</color>
+
+    <!-- Min2m theme accent color for strip action shift icons -->
+    <color name="min2m_shift_icon_color">#FF7FD8D2</color>
 </resources>
