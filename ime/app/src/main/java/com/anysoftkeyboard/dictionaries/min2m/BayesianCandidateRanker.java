@@ -8,14 +8,23 @@ import androidx.annotation.NonNull;
  * <p>score(word) = α × log(frequency / maxFreq) + β × spatialLogP
  *
  * <p>Higher scores are better. The α/β weights control the balance between "common word" bias and
- * "matches what was typed" bias.
+ * "matches what was typed" bias. Spatial log-likelihood is NOT normalized per character - the raw
+ * sum is the correct Bayesian log-likelihood. More characters = more evidence = properly stronger
+ * spatial signal for same-length matches vs shorter edit-distance candidates.
  */
 public class BayesianCandidateRanker {
-  /** Weight for vocabulary frequency prior (log-scaled). */
-  private float mAlpha = 1.0f;
+  /**
+   * Weight for vocabulary frequency prior (log-scaled). Reduced from 1.0 to prevent ultra-common
+   * short words (we, I, a, the) from dominating spatial evidence on compact keyboards where keys
+   * are narrow and spatial scoring is critical for disambiguation.
+   */
+  private float mAlpha = 0.5f;
 
-  /** Weight for spatial likelihood. */
-  private float mBeta = 1.0f;
+  /**
+   * Weight for spatial likelihood. Increased from 1.0 to give spatial evidence more influence on
+   * compact/1D keyboards where adjacent keys are easily confused.
+   */
+  private float mBeta = 1.5f;
 
   private int mMaxFrequency = 1;
 
@@ -32,19 +41,20 @@ public class BayesianCandidateRanker {
    * Computes the combined score for a candidate word.
    *
    * @param frequency the word's corpus frequency from vocab.db
-   * @param spatialLogP the spatial log-likelihood from SpatialScorer (negative; higher = better)
-   * @param candidateLength the candidate word length in codepoints
+   * @param spatialLogP the spatial log-likelihood from SpatialScorer (negative; higher = better).
+   *     This is the raw sum of per-keystroke Gaussian log-likelihoods, NOT normalized per
+   *     character. More matching characters = more spatial evidence = higher score.
+   * @param candidateLength unused (kept for API compatibility)
    * @return combined score (higher is better)
    */
   public float score(int frequency, float spatialLogP, int candidateLength) {
     // logPrior = ln(frequency / maxFrequency)   [range: ~−15 to 0]
     float logFreqPrior = (float) Math.log((double) frequency / mMaxFrequency);
-    // Normalize spatial score per character so longer words don't get
-    // penalized just for having more characters to evaluate.
-    // spatialPerChar = spatialLogP / N   [range: ~−5 to 0 per char]
-    float spatialPerChar = candidateLength > 0 ? spatialLogP / candidateLength : spatialLogP;
-    // score = α × logPrior + β × spatialPerChar
-    return mAlpha * logFreqPrior + mBeta * spatialPerChar;
+    // score = α × logPrior + β × spatialLogP
+    // No per-character normalization: the raw spatial sum IS the correct
+    // Bayesian log-likelihood P(touches|word). Dividing by N inflates scores
+    // for shorter words, causing "we" to beat "see" when 3 characters were typed.
+    return mAlpha * logFreqPrior + mBeta * spatialLogP;
   }
 
   /**
@@ -66,14 +76,14 @@ public class BayesianCandidateRanker {
    * @return integer priority for insertion into the suggestion list
    */
   public static int toIntPriority(float score) {
-    // Linear mapping from score range [-20, 0] to int range [1, MAX_VALUE/2 - 1].
-    // Scores below -20 clamp to 1, scores above 0 clamp to MAX_VALUE/2 - 1.
-    // This preserves the relative differences between scores, unlike sigmoid
-    // which compresses the useful range (-5 to 0) into <1% of the output.
+    // Linear mapping from score range [-30, 0] to int range [1, MAX_VALUE/2 - 1].
+    // Wider range than before (-30 vs -20) because spatial scores are no longer
+    // normalized per character, so raw sums can be larger in magnitude.
+    // Scores below -30 clamp to 1, scores above 0 clamp to MAX_VALUE/2 - 1.
     //
-    // priority = clamp((score + 20) / 20, 0, 1) × (MAX_VALUE/2 - 2) + 1
-    double clamped = Math.max(-20.0, Math.min(0.0, score));
-    double normalized = (clamped + 20.0) / 20.0;
+    // priority = clamp((score + 30) / 30, 0, 1) × (MAX_VALUE/2 - 2) + 1
+    double clamped = Math.max(-30.0, Math.min(0.0, score));
+    double normalized = (clamped + 30.0) / 30.0;
     return 1 + (int) (normalized * (Integer.MAX_VALUE / 2 - 2));
   }
 }

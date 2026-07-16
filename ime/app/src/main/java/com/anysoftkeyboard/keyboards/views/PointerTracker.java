@@ -531,6 +531,10 @@ class PointerTracker {
           nearByKeyCodes[0] = code;
         }
         if (listener != null) {
+          // Store raw touch coordinates on the key for spatial disambiguation.
+          // These are the actual pixel positions of the touch, not the key center.
+          key.lastTouchX = x;
+          key.lastTouchY = y;
           listener.onKey(code, key, mTapCount, nearByKeyCodes, x >= 0 || y >= 0);
           if (withRelease) listener.onRelease(code);
 

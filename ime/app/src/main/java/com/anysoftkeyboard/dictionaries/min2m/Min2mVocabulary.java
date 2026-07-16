@@ -14,9 +14,11 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -64,6 +66,19 @@ public class Min2mVocabulary {
   /** Bigram next-word predictions. Key: word -> list of predicted next words (ordered by rank). */
   private final Map<String, List<String>> mBigrams = new HashMap<>();
 
+  /**
+   * Character trigram frequency table. Key: trigram string (3 chars), Value: count of vocab words
+   * containing that trigram. Built at load time from the vocabulary. Used as a fast pre-filter
+   * to reject implausible candidates before expensive spatial scoring.
+   *
+   * <p>Words with word-boundary markers: "^th", "the", "he$" for "the".
+   * Trigrams appearing in fewer than {@link #TRIGRAM_MIN_COUNT} words are considered rare.
+   */
+  private final Map<String, Integer> mTrigramCounts = new HashMap<>();
+
+  /** Minimum trigram count threshold. Words containing trigrams below this are unlikely. */
+  private static final int TRIGRAM_MIN_COUNT = 3;
+
   private int mMaxFrequency = 1;
   private boolean mIsOpen;
 
@@ -85,6 +100,7 @@ public class Min2mVocabulary {
           SQLiteDatabase.openDatabase(dbFile.getPath(), null, SQLiteDatabase.OPEN_READONLY);
 
       loadVocabulary(db);
+      buildTrigramTable();
       loadBigrams(db);
 
       db.close();
@@ -93,9 +109,10 @@ public class Min2mVocabulary {
       long elapsed = System.currentTimeMillis() - t0;
       Logger.d(
           TAG,
-          "Vocabulary loaded into memory: %d words, %d bigram entries, max freq %d, in %dms",
+          "Vocabulary loaded into memory: %d words, %d bigram entries, %d trigrams, max freq %d, in %dms",
           mWordMap.size(),
           mBigrams.size(),
+          mTrigramCounts.size(),
           mMaxFrequency,
           elapsed);
     } catch (IOException e) {
@@ -137,6 +154,57 @@ public class Min2mVocabulary {
     }
   }
 
+  /**
+   * Builds the character trigram frequency table from the loaded vocabulary.
+   * Each word is padded with '^' (start) and '$' (end) markers, then decomposed
+   * into overlapping 3-character windows. The count records how many distinct
+   * words contain each trigram.
+   *
+   * <p>Example: "the" → trigrams: "^th", "the", "he$"
+   */
+  private void buildTrigramTable() {
+    mTrigramCounts.clear();
+    for (String word : mWordMap.keySet()) {
+      // Pad with boundary markers
+      String padded = "^" + word + "$";
+      // Use a set to count each trigram only once per word
+      Set<String> wordTrigrams = new HashSet<>();
+      for (int i = 0; i <= padded.length() - 3; i++) {
+        wordTrigrams.add(padded.substring(i, i + 3));
+      }
+      for (String trigram : wordTrigrams) {
+        mTrigramCounts.merge(trigram, 1, Integer::sum);
+      }
+    }
+  }
+
+  /**
+   * Checks if a candidate word is plausible based on its character trigrams.
+   * A word is implausible if it contains any trigram that appears in fewer than
+   * {@link #TRIGRAM_MIN_COUNT} vocabulary words - meaning that character sequence
+   * is extremely rare in English.
+   *
+   * <p>This is a fast pre-filter (~1μs per word) to reject garbage candidates
+   * before the more expensive spatial scoring (~10μs per word).
+   *
+   * @param word the candidate word (lowercase)
+   * @return true if the word's trigrams are all plausible
+   */
+  public boolean isPlausibleWord(@NonNull String word) {
+    if (mTrigramCounts.isEmpty()) return true; // no trigram data loaded
+    if (word.length() < 3) return true; // too short for trigram filtering
+
+    String padded = "^" + word + "$";
+    for (int i = 0; i <= padded.length() - 3; i++) {
+      String trigram = padded.substring(i, i + 3);
+      Integer count = mTrigramCounts.get(trigram);
+      if (count == null || count < TRIGRAM_MIN_COUNT) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private void loadBigrams(@NonNull SQLiteDatabase db) {
     try (Cursor c = db.rawQuery("SELECT word, next_word FROM bigrams ORDER BY word, rank", null)) {
       while (c.moveToNext()) {
@@ -154,6 +222,7 @@ public class Min2mVocabulary {
     mSortedWords.clear();
     mByLengthAndFirstChar.clear();
     mBigrams.clear();
+    mTrigramCounts.clear();
     mMaxFrequency = 1;
     mIsOpen = false;
   }
@@ -211,6 +280,7 @@ public class Min2mVocabulary {
    * Returns candidate words for spatial disambiguation. Combines:
    * 1. Prefix completions of the typed word
    * 2. Same-length words starting with any nearby first character
+   * 3. ±1 length words for edit-distance correction (missed/extra keystroke)
    *
    * All lookups are in-memory - no disk I/O.
    */
@@ -235,20 +305,28 @@ public class Min2mVocabulary {
     }
 
     // Part 2: Same-length words starting with any nearby first character
+    // Part 3: ±1 length words for edit-distance correction
+    //   - length-1: user hit an extra key (e.g., "teh" → "the", "helllo" → "hello")
+    //   - length+1: user missed a key (e.g., "helo" → "hello", "te" → "the")
     if (wordLength >= 1 && !firstChars.isEmpty()) {
-      Map<Character, List<CandidateWord>> byChar = mByLengthAndFirstChar.get(wordLength);
-      if (byChar != null) {
-        // Use a generous per-character limit - we're in-memory so iterating
-        // more candidates is cheap, and the spatial scorer handles ranking.
-        // A limit of 20 per character × ~10 first chars = ~200 candidates
-        // to score, which is sub-millisecond in-memory.
-        int perCharLimit = 20;
+      // Use a generous per-character limit - we're in-memory so iterating
+      // more candidates is cheap, and the spatial scorer handles ranking.
+      int perCharLimit = 20;
+      // Fewer candidates for ±1 lengths since they're less likely corrections
+      int editDistPerCharLimit = 10;
+
+      for (int len = wordLength - 1; len <= wordLength + 1; len++) {
+        if (len < 1) continue;
+        Map<Character, List<CandidateWord>> byChar = mByLengthAndFirstChar.get(len);
+        if (byChar == null) continue;
+        int charLimit = (len == wordLength) ? perCharLimit : editDistPerCharLimit;
+
         for (char fc : firstChars) {
           List<CandidateWord> bucket = byChar.get(fc);
           if (bucket == null) continue;
           int added = 0;
           for (CandidateWord word : bucket) {
-            if (added >= perCharLimit) break;
+            if (added >= charLimit) break;
             if (seen.add(word.text)) {
               results.add(word);
               added++;

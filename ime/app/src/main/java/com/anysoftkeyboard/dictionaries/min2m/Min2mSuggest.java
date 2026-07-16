@@ -207,31 +207,26 @@ public class Min2mSuggest implements Suggest {
       return mTagsSearcher.getOutputForTag(lowerOriginalWord.substring(1), wordComposer);
     }
 
-    // Position 0: always the typed word itself
+    // Position 0: the key detector's output (shown in composing text).
+    // The spatial scorer determines the real intended word at position 1.
     mSuggestions.add(0, typedOriginalWord);
     mPriorities[0] = TYPED_WORD_FREQUENCY;
 
-    boolean typedWordIsValid = false;
-    int typedWordVocabFrequency = 0;
-    final boolean useSpatial = wordComposer.hasTouchCoordinates() && mSpatialScorer.hasKeyboard();
+    final boolean hasTouchData =
+        wordComposer.hasTouchCoordinates() && mSpatialScorer.hasKeyboard();
     final int touchCount = wordComposer.codePointCount();
+    int typedWordSpatialPriority = -1;
 
-    // --- Step 1: Generate candidate pool ---
-    // One query combining prefix completions + same-length spatial candidates.
     if (mVocabulary.isOpen()) {
-      // Collect candidate first characters for spatial search.
-      // Instead of relying only on ASK's nearby-key codes (which may be too
-      // narrow on 1D keyboards), use our own spatial scorer to find all
-      // characters whose keys are within a reasonable distance of the first
-      // touch position.
+      // --- Step 1: Generate candidate pool ---
+      // Find all plausible first characters within spatial range of first touch.
       java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
-      if (useSpatial && touchCount >= 1) {
+      if (hasTouchData && touchCount >= 1) {
         float touchX0 = wordComposer.getTouchX(0);
         float touchY0 = wordComposer.getTouchY(0);
-        float threshold = mSpatialScorer.getAvgKeyWidth() * 3f;
+        float threshold = mSpatialScorer.getAvgKeyWidth() * 4f;
         float thresholdSq = threshold * threshold;
 
-        // Check every letter key on the keyboard
         for (int ch = 'a'; ch <= 'z'; ch++) {
           float[] center = mSpatialScorer.getKeyCenter(ch);
           if (center != null) {
@@ -248,11 +243,9 @@ public class Min2mSuggest implements Suggest {
           firstCharCandidates, touchCount, lowerOriginalWord, mPrefMaxSuggestions * 3);
 
       // --- Step 2: Extract touch coordinates ---
-      float[] touchXs = null;
-      float[] touchYs = null;
-      if (useSpatial) {
-        touchXs = new float[touchCount];
-        touchYs = new float[touchCount];
+      float[] touchXs = new float[touchCount];
+      float[] touchYs = new float[touchCount];
+      if (hasTouchData) {
         for (int i = 0; i < touchCount; i++) {
           touchXs[i] = wordComposer.getTouchX(i);
           touchYs[i] = wordComposer.getTouchY(i);
@@ -266,32 +259,33 @@ public class Min2mSuggest implements Suggest {
       }
 
       // --- Step 3: Score every candidate ---
-      // score = α·ln(freq/max) + β·spatialLogP + n-gram boost
+      // Spatial scoring is always primary. All candidates (including the typed
+      // word) are scored uniformly by: α·ln(freq/max) + β·spatialLogP.
+      // The key detector's output is just an approximation - the spatial scorer
+      // is the real decoder, like Minuum.
       for (Min2mVocabulary.CandidateWord candidate : candidates) {
-        int scaledFreq;
+        // Trigram pre-filter: skip candidates with implausible char sequences
+        if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
+            && !mVocabulary.isPlausibleWord(candidate.text)) {
+          continue;
+        }
+
+        float spatialLogP = hasTouchData
+            ? mSpatialScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
+            : 0f;
+        int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
+        float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
+
+        // N-gram context boost
+        if (bigramNextWords.contains(candidate.text)) {
+          bayesianScore += 3.0f;
+        }
+
+        int scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
+
+        // Track the typed word's spatial score for auto-correction decision
         if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
-          // Exact match of typed word - mark valid, record frequency
-          typedWordVocabFrequency = candidate.frequency;
-          scaledFreq = VALID_TYPED_WORD_FREQUENCY;
-          mCorrectSuggestionIndex = 0;
-          typedWordIsValid = true;
-        } else if (useSpatial) {
-          // Bayesian: frequency prior + spatial likelihood (per character)
-          float spatialLogP = mSpatialScorer.scoreWord(
-              candidate.text, touchXs, touchYs, touchCount);
-          int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
-          float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
-
-          // N-gram context boost
-          if (bigramNextWords.contains(candidate.text)) {
-            bayesianScore += 3.0f;
-          }
-
-          scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
-        } else {
-          // No touch data - frequency-only ranking
-          scaledFreq = BayesianCandidateRanker.toIntPriority(
-              mRanker.scoreFrequencyOnly(candidate.frequency));
+          typedWordSpatialPriority = scaledFreq;
         }
 
         StringBuilder sb = getStringBuilderFromPool(
@@ -300,43 +294,41 @@ public class Min2mSuggest implements Suggest {
       }
     }
 
-    // User-learned words and contacts only - no main dictionary.
-    // Our vocabulary + spatial scoring replaces ASK's main dictionary matching.
+    // User-learned words and contacts
     mSuggestionsProvider.getAbbreviations(wordComposer, mAskBridgeCallback);
     mSuggestionsProvider.getAutoText(wordComposer, mAskBridgeCallback);
     mSuggestionsProvider.getUserAndContactsSuggestions(wordComposer, mAskBridgeCallback);
 
     // --- Step 4: Auto-correction ---
-    if (mCorrectSuggestionIndex < 0
-        && mSuggestions.size() > 1 && mPriorities[1] > 0) {
-      if (!typedWordIsValid) {
+    // Auto-correct to position 1 only if it scored higher than the typed word.
+    // If the typed word IS the spatial winner (e.g., user typed "see" correctly
+    // and it has the best spatial score), don't auto-correct away from it.
+    if (mSuggestions.size() > 1 && mPriorities[1] > 0) {
+      if (typedWordSpatialPriority < 0 || mPriorities[1] > typedWordSpatialPriority) {
+        // Position 1 scored better than the typed word (or typed word isn't
+        // in vocabulary at all) - auto-correct to the spatial winner.
         mCorrectSuggestionIndex = 1;
       }
-    } else if (typedWordIsValid && mCorrectSuggestionIndex == 0
-        && mSuggestions.size() > 1 && useSpatial) {
-      // Auto-correct even valid words if alternative is 50x+ more frequent
-      CharSequence topSuggestion = mSuggestions.get(1);
-      int topSuggestionFreq = mVocabulary.isOpen()
-          ? mVocabulary.getFrequency(topSuggestion.toString().toLowerCase(mLocale)) : -1;
-      if (topSuggestionFreq > typedWordVocabFrequency * 50) {
-        mCorrectSuggestionIndex = 1;
-        typedWordIsValid = false;
-      }
-    }
-
-    // Merge next-word suggestions that prefix-match the typed word
-    final int typedWordLength = lowerOriginalWord.length();
-    int nextWordInsertionIndex = mCorrectSuggestionIndex == 0 ? 1 : 0;
-    for (CharSequence nextWordSuggestion : mNextSuggestions) {
-      if (nextWordSuggestion.length() >= typedWordLength
-          && TextUtils.equals(
-              nextWordSuggestion.subSequence(0, typedWordLength), typedOriginalWord)) {
-        mSuggestions.add(nextWordInsertionIndex, nextWordSuggestion);
-        nextWordInsertionIndex++;
-      }
+      // else: typed word IS the spatial winner - no auto-correction needed.
     }
 
     IMEUtil.removeDupes(mSuggestions, mStringPool);
+
+    // Diagnostic logging
+    if (mSuggestions.size() > 1) {
+      StringBuilder logMsg = new StringBuilder();
+      logMsg.append("typed='").append(typedOriginalWord).append("' → [");
+      int logCount = Math.min(mSuggestions.size(), 6);
+      for (int i = 0; i < logCount; i++) {
+        if (i > 0) logMsg.append(", ");
+        logMsg.append(mSuggestions.get(i));
+        if (i < mPriorities.length) {
+          logMsg.append("(").append(mPriorities[i]).append(")");
+        }
+        if (i == mCorrectSuggestionIndex) logMsg.append("*");
+      }
+      Logger.d(TAG, logMsg.toString());
+    }
     return mSuggestions;
   }
 

@@ -351,6 +351,14 @@ public abstract class Keyboard {
     /** The current pressed state of this key */
     public boolean pressed;
 
+    /**
+     * Raw touch coordinates from the last press that resolved to this key.
+     * Set by PointerTracker before onKey; used by spatial scoring for disambiguation.
+     * Transient: not persisted, not part of keyboard layout definition.
+     */
+    public float lastTouchX = -1f;
+    public float lastTouchY = -1f;
+
     /** Text to output when pressed. This can be multiple characters, like ".com" */
     public CharSequence text;
 

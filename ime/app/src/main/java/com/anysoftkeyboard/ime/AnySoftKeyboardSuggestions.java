@@ -603,8 +603,20 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
     final InputConnection ic = getCurrentInputConnection();
     if (isPredictionOn()) {
-      final float touchX = (key != null) ? key.x + key.width / 2f : -1f;
-      final float touchY = (key != null) ? key.y + key.height / 2f : -1f;
+      // Use raw touch coordinates for spatial disambiguation when available.
+      // Falls back to key center if no touch data (e.g., hardware keyboard, test).
+      final float touchX;
+      final float touchY;
+      if (key != null && key.lastTouchX >= 0) {
+        touchX = key.lastTouchX;
+        touchY = key.lastTouchY;
+      } else if (key != null) {
+        touchX = key.x + key.width / 2f;
+        touchY = key.y + key.height / 2f;
+      } else {
+        touchX = -1f;
+        touchY = -1f;
+      }
       mWord.add(primaryCode, nearByKeyCodes, touchX, touchY);
       if (ic != null) {
         int newCursorPosition;

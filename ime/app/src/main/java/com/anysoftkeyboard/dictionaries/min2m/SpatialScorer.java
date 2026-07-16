@@ -23,6 +23,16 @@ public class SpatialScorer {
   /** Average key width, used as fallback sigma and for normalization. */
   private float mAvgKeyWidth = 1f;
 
+  /**
+   * Minimum σ in pixels, based on physical finger size (~7-10mm ≈ 40-60px on
+   * a typical 400-440 dpi phone screen). Prevents σ from being too narrow on
+   * compact/1D keyboards where keys are much smaller than a fingertip.
+   * Without this floor, being off by 1 key on a 28px-wide 1D keyboard gives
+   * a devastating −2.0 per-character penalty (σ=14px), making it impossible
+   * for "well" to beat "zoo" when touches land 1 key off.
+   */
+  private static final float MIN_SIGMA_PX = 48f;
+
   private boolean mHasKeyboard = false;
 
   /**
@@ -57,11 +67,12 @@ public class SpatialScorer {
     }
 
     if (letterKeyCount > 0) {
-      // avgKeyWidth = Σ(keyWidth) / N
       mAvgKeyWidth = totalWidth / letterKeyCount;
-      // σ = avgKeyWidth / 2
-      float sigma = mAvgKeyWidth * 0.5f;
-      // σ² = σ × σ
+      // σ = max(avgKeyWidth / 2, MIN_SIGMA_PX)
+      // On a full 2D keyboard (key width ~100px), σ ≈ 50px (natural).
+      // On a 1D keyboard (key width ~28px), σ = 48px (floor), tolerating
+      // touches up to ~1.7 keys off before the Gaussian penalty exceeds −1.
+      float sigma = Math.max(mAvgKeyWidth * 0.5f, MIN_SIGMA_PX);
       mSigmaSquared = sigma * sigma;
     }
 
@@ -86,14 +97,30 @@ public class SpatialScorer {
       @NonNull String candidate, float[] touchXs, float[] touchYs, int touchCount) {
     if (!mHasKeyboard || touchCount == 0) return 0f;
 
-    // Only score candidates matching the touch count exactly for now.
-    // Edit-distance candidates (different length) get a flat penalty instead.
     int candidateLen = candidate.codePointCount(0, candidate.length());
-    if (candidateLen != touchCount) {
-      // penalty = -2.0 × |candidateLength − touchCount|
+    if (candidateLen == touchCount) {
+      return scoreAligned(candidate, touchXs, touchYs, touchCount);
+    } else if (candidateLen == touchCount - 1) {
+      // User typed one extra key (e.g., "helllo" for "hello").
+      // Try skipping each touch position and take the best alignment.
+      return scoreWithSkippedTouch(candidate, touchXs, touchYs, touchCount);
+    } else if (candidateLen == touchCount + 1) {
+      // User missed a key (e.g., "helo" for "hello").
+      // Try skipping each candidate character and take the best alignment.
+      return scoreWithSkippedChar(candidate, touchXs, touchYs, touchCount);
+    } else {
+      // Larger length difference - flat penalty, not a plausible spatial match
       return -2.0f * Math.abs(candidateLen - touchCount);
     }
+  }
 
+  /**
+   * Scores a candidate that exactly matches the touch count (1:1 alignment).
+   *
+   * <p>logP = Σ −d²ᵢ / (2σ²) for each character i
+   */
+  private float scoreAligned(
+      @NonNull String candidate, float[] touchXs, float[] touchYs, int touchCount) {
     float logP = 0f;
     int charIndex = 0;
     for (int i = 0; i < candidate.length(); ) {
@@ -102,21 +129,104 @@ public class SpatialScorer {
 
       float[] center = mKeyCenters.get(lowerCp);
       if (center != null && charIndex < touchCount && touchXs[charIndex] >= 0) {
-        // dx = touchX − centerX,  dy = touchY − centerY
         float dx = touchXs[charIndex] - center[0];
         float dy = touchYs[charIndex] - center[1];
-        // d² = dx² + dy²
         float distSq = dx * dx + dy * dy;
-        // logP += −d² / (2σ²)   [Gaussian log-likelihood per keystroke]
         logP += -distSq / (2f * mSigmaSquared);
       }
-      // If no center found (e.g., apostrophe), skip scoring that position
 
       i += Character.charCount(cp);
       charIndex++;
     }
-
     return logP;
+  }
+
+  /**
+   * Scores when candidate is 1 shorter than touches (extra keystroke).
+   * Tries skipping each touch position, returns best score minus a skip penalty.
+   *
+   * <p>penalty = −2.5 (strong enough to prevent ultra-common short words from
+   * dominating same-length spatial matches on compact keyboards)
+   */
+  private float scoreWithSkippedTouch(
+      @NonNull String candidate, float[] touchXs, float[] touchYs, int touchCount) {
+    int candidateLen = candidate.codePointCount(0, candidate.length());
+    float bestScore = Float.NEGATIVE_INFINITY;
+
+    for (int skipTouch = 0; skipTouch < touchCount; skipTouch++) {
+      float logP = 0f;
+      int charIndex = 0;
+      int touchIndex = 0;
+      for (int i = 0; i < candidate.length() && charIndex < candidateLen; ) {
+        // Skip the designated touch position
+        if (touchIndex == skipTouch) {
+          touchIndex++;
+        }
+        int cp = Character.codePointAt(candidate, i);
+        int lowerCp = Character.toLowerCase(cp);
+
+        float[] center = mKeyCenters.get(lowerCp);
+        if (center != null && touchIndex < touchCount && touchXs[touchIndex] >= 0) {
+          float dx = touchXs[touchIndex] - center[0];
+          float dy = touchYs[touchIndex] - center[1];
+          float distSq = dx * dx + dy * dy;
+          logP += -distSq / (2f * mSigmaSquared);
+        }
+
+        i += Character.charCount(cp);
+        charIndex++;
+        touchIndex++;
+      }
+      if (logP > bestScore) {
+        bestScore = logP;
+      }
+    }
+    // Apply skip penalty: −2.5 for one extra keystroke
+    return bestScore - 2.5f;
+  }
+
+  /**
+   * Scores when candidate is 1 longer than touches (missed keystroke).
+   * Tries skipping each candidate character, returns best score minus a skip penalty.
+   *
+   * <p>penalty = −2.5 (strong enough to prevent length-mismatched candidates
+   * from outranking well-matched same-length alternatives)
+   */
+  private float scoreWithSkippedChar(
+      @NonNull String candidate, float[] touchXs, float[] touchYs, int touchCount) {
+    // Build array of candidate code points for easy indexed access
+    int candidateLen = candidate.codePointCount(0, candidate.length());
+    int[] codePoints = new int[candidateLen];
+    int idx = 0;
+    for (int i = 0; i < candidate.length(); ) {
+      codePoints[idx++] = Character.codePointAt(candidate, i);
+      i += Character.charCount(codePoints[idx - 1]);
+    }
+
+    float bestScore = Float.NEGATIVE_INFINITY;
+
+    for (int skipChar = 0; skipChar < candidateLen; skipChar++) {
+      float logP = 0f;
+      int touchIndex = 0;
+      for (int ci = 0; ci < candidateLen; ci++) {
+        if (ci == skipChar) continue;
+        int lowerCp = Character.toLowerCase(codePoints[ci]);
+
+        float[] center = mKeyCenters.get(lowerCp);
+        if (center != null && touchIndex < touchCount && touchXs[touchIndex] >= 0) {
+          float dx = touchXs[touchIndex] - center[0];
+          float dy = touchYs[touchIndex] - center[1];
+          float distSq = dx * dx + dy * dy;
+          logP += -distSq / (2f * mSigmaSquared);
+        }
+        touchIndex++;
+      }
+      if (logP > bestScore) {
+        bestScore = logP;
+      }
+    }
+    // Apply skip penalty: −2.5 for one missed keystroke
+    return bestScore - 2.5f;
   }
 
   /**
