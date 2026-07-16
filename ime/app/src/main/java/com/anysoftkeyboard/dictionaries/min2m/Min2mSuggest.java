@@ -186,13 +186,13 @@ public class Min2mSuggest implements Suggest {
     mSuggestions.add(0, typedOriginalWord);
     mPriorities[0] = TYPED_WORD_FREQUENCY;
 
-    // Query our vocabulary database for prefix matches
-    if (mVocabulary.isOpen()) {
-      List<Min2mVocabulary.CandidateWord> vocabMatches =
-          mVocabulary.getPrefixMatches(lowerOriginalWord, mPrefMaxSuggestions * 2);
+    boolean typedWordIsValid = false;
+    int typedWordVocabFrequency = 0;
+    final boolean useSpatial = wordComposer.hasTouchCoordinates() && mSpatialScorer.hasKeyboard();
 
+    // Query our vocabulary database for prefix matches + fuzzy candidates
+    if (mVocabulary.isOpen()) {
       // Extract touch coordinates for spatial scoring
-      final boolean useSpatial = wordComposer.hasTouchCoordinates() && mSpatialScorer.hasKeyboard();
       final int touchCount = wordComposer.codePointCount();
       float[] touchXs = null;
       float[] touchYs = null;
@@ -205,17 +205,60 @@ public class Min2mSuggest implements Suggest {
         }
       }
 
+      // Phase 1: Exact prefix matches (fast path)
+      List<Min2mVocabulary.CandidateWord> vocabMatches =
+          mVocabulary.getPrefixMatches(lowerOriginalWord, mPrefMaxSuggestions * 2);
+
+      // Phase 2: Fuzzy candidates from nearby-key substitutions.
+      // For each position in the typed word, substitute with nearby keys
+      // to generate alternate prefixes, then query the vocabulary.
+      if (useSpatial && touchCount >= 1) {
+        List<String> alternatePrefixes = new ArrayList<>();
+        for (int pos = 0; pos < touchCount && pos < 3; pos++) {
+          int[] codes = wordComposer.getCodesAt(pos);
+          // codes[0] is the primary key, codes[1..] are nearby keys
+          for (int ci = 1; ci < codes.length && codes[ci] != WordComposer.NOT_A_KEY_INDEX; ci++) {
+            char altChar = Character.toLowerCase((char) codes[ci]);
+            if (!Character.isLetter(altChar)) continue;
+            StringBuilder altPrefix = new StringBuilder(lowerOriginalWord);
+            // Find the char index corresponding to this codepoint position
+            int charIdx = lowerOriginalWord.offsetByCodePoints(0, pos);
+            int cpLen = Character.charCount(lowerOriginalWord.codePointAt(charIdx));
+            altPrefix.replace(charIdx, charIdx + cpLen, String.valueOf(altChar));
+            alternatePrefixes.add(altPrefix.toString());
+          }
+        }
+        if (!alternatePrefixes.isEmpty()) {
+          vocabMatches.addAll(
+              mVocabulary.getMultiPrefixMatches(alternatePrefixes, mPrefMaxSuggestions));
+        }
+      }
+
       for (Min2mVocabulary.CandidateWord candidate : vocabMatches) {
         int scaledFreq;
         if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
-          // Exact match (ignoring case) — treat as valid typed word
+          // Exact match — record its frequency for later validity check
+          typedWordVocabFrequency = candidate.frequency;
           scaledFreq = VALID_TYPED_WORD_FREQUENCY;
           mCorrectSuggestionIndex = 0;
+          typedWordIsValid = true;
         } else if (useSpatial) {
           // Bayesian scoring: frequency prior + spatial likelihood
           float spatialLogP = mSpatialScorer.scoreWord(
               candidate.text, touchXs, touchYs, touchCount);
           float bayesianScore = mRanker.score(candidate.frequency, spatialLogP);
+
+          // Same-length bonus: candidates matching typed length are much more
+          // likely to be the intended word than longer completions.
+          int candidateCodePoints = candidate.text.codePointCount(0, candidate.text.length());
+          if (candidateCodePoints == touchCount) {
+            // Boost same-length candidates significantly
+            bayesianScore += 5.0f;
+          } else {
+            // Penalize length difference — longer completions rank lower
+            bayesianScore -= 0.5f * Math.abs(candidateCodePoints - touchCount);
+          }
+
           scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
         } else {
           // Frequency-only fallback (no touch data)
@@ -233,6 +276,34 @@ public class Min2mSuggest implements Suggest {
     mSuggestionsProvider.getAbbreviations(wordComposer, mAskBridgeCallback);
     mSuggestionsProvider.getAutoText(wordComposer, mAskBridgeCallback);
     mSuggestionsProvider.getSuggestions(wordComposer, mAskBridgeCallback);
+
+    // If the typed word is not a valid dictionary word and we have a correction
+    // candidate at position 1, mark it as the auto-correction target.
+    // This makes space/punctuation commit the corrected word instead of the typo.
+    //
+    // Also auto-correct if the typed word IS in the vocab but has a much lower
+    // frequency than the top suggestion — handles cases like 'q' (freq 8K) being
+    // corrected to 'a' (freq 5.5M) when 'a' is a nearby key.
+    if (mCorrectSuggestionIndex < 0
+        && mSuggestions.size() > 1 && mPriorities[1] > 0) {
+      if (!typedWordIsValid) {
+        // Typed word not in vocabulary — auto-correct to top suggestion
+        mCorrectSuggestionIndex = 1;
+      }
+    } else if (typedWordIsValid && mCorrectSuggestionIndex == 0
+        && mSuggestions.size() > 1 && useSpatial) {
+      // Typed word is valid but check if a nearby-key alternative is much more common.
+      // Look at the suggestion at position 1 — if it came from a nearby key and has
+      // a vastly higher frequency, prefer it as a correction.
+      CharSequence topSuggestion = mSuggestions.get(1);
+      int topSuggestionFreq = mVocabulary.isOpen()
+          ? mVocabulary.getFrequency(topSuggestion.toString().toLowerCase(mLocale)) : -1;
+      // Auto-correct if the alternative is 50x+ more frequent than the typed word
+      if (topSuggestionFreq > typedWordVocabFrequency * 50) {
+        mCorrectSuggestionIndex = 1;
+        typedWordIsValid = false; // prevent learning the typo
+      }
+    }
 
     // Merge next-word suggestions that prefix-match the typed word
     final int typedWordLength = lowerOriginalWord.length();

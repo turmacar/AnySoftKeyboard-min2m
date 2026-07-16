@@ -106,6 +106,45 @@ public class Min2mVocabulary {
   }
 
   /**
+   * Returns words matching any of the given alternate prefixes, ordered by frequency descending.
+   * Used for fuzzy matching: generate prefixes from nearby-key substitutions, then query each.
+   *
+   * @param prefixes list of alternate prefix strings to search
+   * @param limit maximum total results across all prefixes
+   * @return deduplicated list of matching words, highest frequency first
+   */
+  @NonNull
+  public List<CandidateWord> getMultiPrefixMatches(
+      @NonNull List<String> prefixes, int limit) {
+    List<CandidateWord> results = new ArrayList<>();
+    if (!mIsOpen || mDb == null || prefixes.isEmpty()) return results;
+
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    int perPrefixLimit = Math.max(4, limit / prefixes.size());
+
+    for (String prefix : prefixes) {
+      if (prefix.isEmpty()) continue;
+      String lowerPrefix = prefix.toLowerCase();
+      String upperBound = incrementLastChar(lowerPrefix);
+
+      try (Cursor c =
+          mDb.rawQuery(
+              "SELECT word_id, text, frequency, zipf FROM vocab "
+                  + "WHERE text >= ? AND text < ? "
+                  + "ORDER BY frequency DESC LIMIT ?",
+              new String[] {lowerPrefix, upperBound, String.valueOf(perPrefixLimit)})) {
+        while (c.moveToNext()) {
+          String text = c.getString(1);
+          if (seen.add(text)) {
+            results.add(new CandidateWord(c.getInt(0), text, c.getInt(2), c.getFloat(3)));
+          }
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
    * Returns the frequency for an exact word match, or -1 if not found.
    *
    * @param word the word to look up (case-insensitive)
