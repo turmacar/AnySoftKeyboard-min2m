@@ -246,4 +246,34 @@ public class SpatialScorer {
   public float getAvgKeyWidth() {
     return mAvgKeyWidth;
   }
+
+  /** Returns the key centers map for spatial index construction. */
+  @NonNull
+  public Map<Integer, float[]> getKeyCenters() {
+    return mKeyCenters;
+  }
+
+  /**
+   * Returns whether the current keyboard is a 1D layout (all keys on one row).
+   * Detected by checking if the y-coordinate variance across letter keys is
+   * small relative to the average key height.
+   */
+  public boolean is1D() {
+    if (!mHasKeyboard) return false;
+    float sumY = 0, sumYSq = 0;
+    int count = 0;
+    for (Map.Entry<Integer, float[]> entry : mKeyCenters.entrySet()) {
+      if (Character.isLetter(entry.getKey())) {
+        float y = entry.getValue()[1];
+        sumY += y;
+        sumYSq += y * y;
+        count++;
+      }
+    }
+    if (count < 2) return true;
+    float meanY = sumY / count;
+    float variance = sumYSq / count - meanY * meanY;
+    // If std dev of y < half the average key width, it's effectively 1D
+    return Math.sqrt(variance) < mAvgKeyWidth * 0.5f;
+  }
 }

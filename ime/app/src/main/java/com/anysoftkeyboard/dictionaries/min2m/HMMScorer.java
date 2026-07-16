@@ -46,10 +46,13 @@ public class HMMScorer {
 
   /**
    * Log-probability of skipping an apostrophe (contraction).
-   * Nearly free: users type "im" for "I'm", "dont" for "don't".
-   * The apostrophe is an expected omission, not an error.
+   * Set to 0.0 (truly free/neutral): the apostrophe is invisible to the HMM.
+   * Users type "im" for "I'm", "dont" for "don't" — the apostrophe is an
+   * expected omission. A non-zero value (even -0.1) gives apostrophe words
+   * a slight scoring advantage over non-apostrophe words of the same spatial
+   * quality, causing e.g. "Liechtenstein's" to beat "Historically".
    */
-  private static final float LOG_P_APOSTROPHE_SKIP = -0.1f;
+  private static final float LOG_P_APOSTROPHE_SKIP = 0.0f;
 
   /**
    * Log-probability of normal match transition.

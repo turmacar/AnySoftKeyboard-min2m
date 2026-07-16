@@ -63,6 +63,13 @@ public class Min2mVocabulary {
   private final Map<Integer, Map<Character, List<CandidateWord>>> mByLengthAndFirstChar =
       new HashMap<>();
 
+  /**
+   * Top-frequency words grouped by length. For supplementing kd-tree results with
+   * common words that might be missed by spatial search (e.g., "that" when the first
+   * touch lands on a neighboring key). Sorted by frequency descending.
+   */
+  private final Map<Integer, List<CandidateWord>> mTopByLength = new HashMap<>();
+
   /** Bigram next-word predictions. Key: word -> list of predicted next words (ordered by rank). */
   private final Map<String, List<String>> mBigrams = new HashMap<>();
 
@@ -152,6 +159,20 @@ public class Min2mVocabulary {
         words.sort((a, b) -> Integer.compare(b.frequency, a.frequency));
       }
     }
+
+    // Build top-by-length index: merge all first-char buckets per length,
+    // sort by frequency, keep top 50. These common words supplement kd-tree
+    // results to ensure high-frequency words are always candidates.
+    for (Map.Entry<Integer, Map<Character, List<CandidateWord>>> entry :
+        mByLengthAndFirstChar.entrySet()) {
+      List<CandidateWord> allAtLength = new ArrayList<>();
+      for (List<CandidateWord> bucket : entry.getValue().values()) {
+        allAtLength.addAll(bucket);
+      }
+      allAtLength.sort((a, b) -> Integer.compare(b.frequency, a.frequency));
+      int cap = Math.min(allAtLength.size(), 50);
+      mTopByLength.put(entry.getKey(), new ArrayList<>(allAtLength.subList(0, cap)));
+    }
   }
 
   /**
@@ -221,6 +242,7 @@ public class Min2mVocabulary {
     mWordMap.clear();
     mSortedWords.clear();
     mByLengthAndFirstChar.clear();
+    mTopByLength.clear();
     mBigrams.clear();
     mTrigramCounts.clear();
     mMaxFrequency = 1;
@@ -232,6 +254,23 @@ public class Min2mVocabulary {
   }
 
   // --- Query methods (all in-memory, no disk I/O) ---
+
+  /**
+   * Returns the most frequent words of a given length, regardless of first character.
+   * Used to supplement kd-tree spatial results with common words that might be missed
+   * when the first touch lands on a neighboring key (e.g., "that" when 't' detected as 'g').
+   *
+   * @param length word length
+   * @param limit maximum words to return
+   */
+  @NonNull
+  public List<CandidateWord> getTopByLength(int length, int limit) {
+    if (!mIsOpen) return Collections.emptyList();
+    List<CandidateWord> top = mTopByLength.get(length);
+    if (top == null) return Collections.emptyList();
+    if (top.size() <= limit) return top;
+    return top.subList(0, limit);
+  }
 
   /**
    * Returns words matching the given prefix, ordered by frequency descending.
@@ -266,6 +305,12 @@ public class Min2mVocabulary {
   /** Checks if a word exists in the vocabulary. */
   public boolean isValidWord(@NonNull String word) {
     return mIsOpen && mWordMap.containsKey(word.toLowerCase());
+  }
+
+  /** Returns all words in the vocabulary. For spatial index construction. */
+  @NonNull
+  public java.util.Collection<CandidateWord> getAllWords() {
+    return mWordMap.values();
   }
 
   /** Returns the top next-word predictions from bigram data. */

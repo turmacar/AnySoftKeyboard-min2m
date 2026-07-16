@@ -43,6 +43,7 @@ public class Min2mSuggest implements Suggest {
   @NonNull private final SpatialScorer mSpatialScorer;
   @NonNull private final HMMScorer mHmmScorer;
   @NonNull private final BayesianCandidateRanker mRanker;
+  @NonNull private final SpatialIndex mSpatialIndex;
   @NonNull private final Context mContext;
 
   private final List<CharSequence> mSuggestions = new ArrayList<>();
@@ -66,6 +67,7 @@ public class Min2mSuggest implements Suggest {
     mSpatialScorer = new SpatialScorer();
     mHmmScorer = new HMMScorer(mSpatialScorer);
     mRanker = new BayesianCandidateRanker();
+    mSpatialIndex = new SpatialIndex();
     setMaxSuggestions(mPrefMaxSuggestions);
 
     // Load vocabulary on a background thread to avoid StrictMode disk-read
@@ -75,6 +77,12 @@ public class Min2mSuggest implements Suggest {
       mVocabulary.open(context);
       if (mVocabulary.isOpen()) {
         mRanker.setMaxFrequency(mVocabulary.getMaxFrequency());
+        // If keyboard was registered before vocab finished loading,
+        // build the spatial index now that we have both pieces.
+        if (mSpatialScorer.hasKeyboard()) {
+          mSpatialIndex.build(
+              mVocabulary, mSpatialScorer.getKeyCenters(), mSpatialScorer.is1D());
+        }
       }
       Logger.d(TAG, "Vocabulary background load complete");
     }, "min2m-vocab-load").start();
@@ -88,6 +96,7 @@ public class Min2mSuggest implements Suggest {
     mSpatialScorer = new SpatialScorer();
     mHmmScorer = new HMMScorer(mSpatialScorer);
     mRanker = new BayesianCandidateRanker();
+    mSpatialIndex = new SpatialIndex();
     setMaxSuggestions(mPrefMaxSuggestions);
   }
 
@@ -98,6 +107,16 @@ public class Min2mSuggest implements Suggest {
   public void registerKeyboard(@NonNull java.util.List<Keyboard.Key> keys) {
     mSpatialScorer.registerKeyboard(keys);
     Logger.d(TAG, "Registered keyboard with %d keys for spatial scoring", keys.size());
+
+    // Rebuild spatial index on a background thread. The index maps every
+    // vocabulary word to a position vector based on key centers, then builds
+    // one kd-tree per word length. Queries become O(log n) instead of
+    // brute-force O(n). Following Minuum's wsKdTreeQuery architecture.
+    if (mVocabulary.isOpen()) {
+      new Thread(() -> {
+        mSpatialIndex.build(mVocabulary, mSpatialScorer.getKeyCenters(), mSpatialScorer.is1D());
+      }, "min2m-kdtree-build").start();
+    }
   }
 
   @Override
@@ -222,19 +241,12 @@ public class Min2mSuggest implements Suggest {
 
     if (mVocabulary.isOpen()) {
       // --- Step 1: Generate candidate pool ---
-      // Include all 26 letters as first-char candidates. The HMM scorer
-      // handles ranking by spatial distance -- pre-filtering by first-char
-      // position was too aggressive on compact keyboards where 'c' and 'q'
-      // are far apart but both plausible for a given touch position.
-      java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
-      for (char ch = 'a'; ch <= 'z'; ch++) {
-        firstCharCandidates.add(ch);
-      }
+      // Use kd-tree spatial index when available (O(log n) nearest-neighbor
+      // search in key-position space). Falls back to brute-force by
+      // length + first-char when the index isn't built yet.
+      List<Min2mVocabulary.CandidateWord> candidates;
 
-      List<Min2mVocabulary.CandidateWord> candidates = mVocabulary.getSpatialCandidates(
-          firstCharCandidates, touchCount, lowerOriginalWord, mPrefMaxSuggestions * 3);
-
-      // --- Step 2: Extract touch coordinates ---
+      // Extract touch coordinates early — needed for both kd-tree query and HMM scoring
       float[] touchXs = new float[touchCount];
       float[] touchYs = new float[touchCount];
       if (hasTouchData) {
@@ -242,6 +254,45 @@ public class Min2mSuggest implements Suggest {
           touchXs[i] = wordComposer.getTouchX(i);
           touchYs[i] = wordComposer.getTouchY(i);
         }
+      }
+
+      long tQuery;
+
+      if (hasTouchData && mSpatialIndex.isBuilt()) {
+        // KD-tree path: query returns spatially nearest words across
+        // exact-length and +/-1 edit-distance length buckets
+        long t0 = System.nanoTime();
+        candidates = mSpatialIndex.query(touchXs, touchYs, touchCount, 100);
+
+        // For words longer than the kd-tree covers (>20 chars), the query
+        // returns nothing for those length buckets. Fall back to brute-force
+        // for the ~33 words that exceed MAX_INDEXED_LENGTH.
+        if (touchCount > 20) {
+          java.util.Set<Character> allChars = new java.util.HashSet<>();
+          for (char ch = 'a'; ch <= 'z'; ch++) allChars.add(ch);
+          for (Min2mVocabulary.CandidateWord c : mVocabulary.getSpatialCandidates(
+              allChars, touchCount, lowerOriginalWord, 50)) {
+            candidates.add(c);
+          }
+        }
+
+        // Supplement with prefix matches for the typed word (the key detector's
+        // output may still be useful even if not spatially optimal)
+        for (Min2mVocabulary.CandidateWord pw : mVocabulary.getPrefixMatches(lowerOriginalWord, 20)) {
+          candidates.add(pw);
+        }
+
+        tQuery = System.nanoTime() - t0;
+      } else {
+        // Fallback: brute-force candidate pool (pre-kd-tree path)
+        long t0 = System.nanoTime();
+        java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
+        for (char ch = 'a'; ch <= 'z'; ch++) {
+          firstCharCandidates.add(ch);
+        }
+        candidates = mVocabulary.getSpatialCandidates(
+            firstCharCandidates, touchCount, lowerOriginalWord, mPrefMaxSuggestions * 3);
+        tQuery = System.nanoTime() - t0;
       }
 
       // Build n-gram context set for boosting
@@ -255,6 +306,8 @@ public class Min2mSuggest implements Suggest {
       // word) are scored uniformly by: α·ln(freq/max) + β·spatialLogP.
       // The key detector's output is just an approximation - the spatial scorer
       // is the real decoder, like Minuum.
+      long tScore0 = System.nanoTime();
+      int scoredCount = 0;
       for (Min2mVocabulary.CandidateWord candidate : candidates) {
         // Trigram pre-filter: skip candidates with implausible char sequences
         if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
@@ -265,6 +318,7 @@ public class Min2mSuggest implements Suggest {
         float spatialLogP = hasTouchData
             ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
             : 0f;
+        scoredCount++;
         int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
         float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
 
@@ -284,6 +338,11 @@ public class Min2mSuggest implements Suggest {
             candidate.text, isFirstCharCapitalized, isAllUpperCase);
         insertSuggestion(sb, scaledFreq);
       }
+      long tScore = System.nanoTime() - tScore0;
+
+      // Performance logging (every call for now, can throttle later)
+      Logger.d(TAG, "perf: query=%.2fms (%d candidates), score=%.2fms (%d scored), total=%.2fms",
+          tQuery / 1e6, candidates.size(), tScore / 1e6, scoredCount, (tQuery + tScore) / 1e6);
     }
 
     // User-learned words and contacts
@@ -302,6 +361,43 @@ public class Min2mSuggest implements Suggest {
     }
 
     IMEUtil.removeDupes(mSuggestions, mStringPool);
+
+    // The pronoun "I" and its contractions must always be capitalized in English.
+    // The vocabulary stores everything lowercase; fix it in the suggestion list.
+    // Also handle apostrophe-less forms (e.g., "ive" → "I've") since users
+    // don't type apostrophes on compact keyboards.
+    for (int i = 0; i < mSuggestions.size(); i++) {
+      CharSequence s = mSuggestions.get(i);
+      String lower = s.toString().toLowerCase(mLocale);
+      String capitalized = null;
+      if (lower.equals("i") || lower.equals("i'm") || lower.equals("i'll")
+          || lower.equals("i'd") || lower.equals("i've")) {
+        capitalized = "I" + lower.substring(1);
+      } else if (lower.equals("im")) {
+        capitalized = "I'm";
+      } else if (lower.equals("ill")) {
+        // Don't convert "ill" — it's a common word meaning "sick"
+      } else if (lower.equals("id")) {
+        // Don't convert "id" — it's a common word (identification/Freudian)
+      } else if (lower.equals("ive")) {
+        capitalized = "I've";
+      }
+      if (capitalized != null) {
+        if (s instanceof StringBuilder) {
+          ((StringBuilder) s).setLength(0);
+          ((StringBuilder) s).append(capitalized);
+        } else {
+          mSuggestions.set(i, capitalized);
+        }
+        // Force autocorrect so ASK commits the capitalized form instead of
+        // the raw keystrokes. Position 0 = typed word slot: on a 2D keyboard
+        // the user types "i" directly and we need "I" committed. Position 1+
+        // = normal autocorrect.
+        if (i == 0 || mCorrectSuggestionIndex < 0) {
+          mCorrectSuggestionIndex = i;
+        }
+      }
+    }
 
     // Diagnostic logging
     if (mSuggestions.size() > 1) {
