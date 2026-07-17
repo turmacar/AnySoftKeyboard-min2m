@@ -3,6 +3,7 @@ package com.anysoftkeyboard.dictionaries.min2m;
 import android.content.Context;
 import android.text.TextUtils;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import com.anysoftkeyboard.base.utils.Logger;
 import com.anysoftkeyboard.dictionaries.Dictionary;
@@ -33,6 +34,12 @@ import java.util.Locale;
 public class Min2mSuggest implements Suggest {
   private static final String TAG = "Min2mSuggest";
 
+  public enum ComposingCaseMode {
+    LOWER,
+    TITLE,
+    UPPER
+  }
+
   // Frequency tiers matching SuggestImpl conventions so the candidate view
   // treats typed-word, valid-typed, and corrections the same way.
   private static final int TYPED_WORD_FREQUENCY = Integer.MAX_VALUE;
@@ -59,6 +66,7 @@ public class Min2mSuggest implements Suggest {
   private boolean mEnabledSuggestions;
   private int mCommonalityMaxLengthDiff = 1;
   private int mCommonalityMaxDistance = 1;
+  @NonNull private ComposingCaseMode mComposingCaseMode = ComposingCaseMode.LOWER;
 
   public Min2mSuggest(@NonNull Context context) {
     mContext = context;
@@ -116,6 +124,88 @@ public class Min2mSuggest implements Suggest {
       new Thread(() -> {
         mSpatialIndex.build(mVocabulary, mSpatialScorer.getKeyCenters(), mSpatialScorer.is1D());
       }, "min2m-kdtree-build").start();
+    }
+  }
+
+  public void setComposingCaseMode(@NonNull ComposingCaseMode composingCaseMode) {
+    mComposingCaseMode = composingCaseMode;
+  }
+
+  @NonNull
+  public CharSequence applyComposingCaseMode(@NonNull CharSequence text) {
+    if (text.length() == 0) {
+      return text;
+    }
+
+    final String word = text.toString();
+    final String lowerWord = word.toLowerCase(mLocale);
+
+    // English pronoun I and its contractions should remain capitalized in
+    // LOWER/TITLE, but still honor UPPER mode.
+    final String pronounNormalized = normalizePronounI(lowerWord);
+    if (pronounNormalized != null) {
+      switch (mComposingCaseMode) {
+        case UPPER:
+          return pronounNormalized.toUpperCase(mLocale);
+        case TITLE:
+        case LOWER:
+        default:
+          return pronounNormalized;
+      }
+    }
+
+    switch (mComposingCaseMode) {
+      case UPPER:
+        return word.toUpperCase(mLocale);
+      case TITLE:
+        if (word.length() == 1) {
+          return word.toUpperCase(mLocale);
+        }
+        return Character.toUpperCase(word.charAt(0)) + word.substring(1).toLowerCase(mLocale);
+      case LOWER:
+      default:
+        return word.toLowerCase(mLocale);
+    }
+  }
+
+  @Nullable
+  private String normalizePronounI(@NonNull String lowerWord) {
+    switch (lowerWord) {
+      case "i":
+        return "I";
+      case "i'm":
+      case "im":
+        return "I'm";
+      case "i've":
+      case "ive":
+        return "I've";
+      case "i'll":
+        return "I'll";
+      case "i'd":
+        return "I'd";
+      default:
+        return null;
+    }
+  }
+
+  private void normalizePronounSuggestions(List<CharSequence> suggestions) {
+    for (int i = 0; i < suggestions.size(); i++) {
+      CharSequence s = suggestions.get(i);
+      String normalized = normalizePronounI(s.toString().toLowerCase(mLocale));
+      if (normalized == null) {
+        continue;
+      }
+      CharSequence transformed = applyComposingCaseMode(normalized);
+      if (s instanceof StringBuilder) {
+        ((StringBuilder) s).setLength(0);
+        ((StringBuilder) s).append(transformed);
+      } else {
+        suggestions.set(i, transformed);
+      }
+      // Ensure autocorrect can pick the normalized pronoun forms.
+      if (i == 0 || mCorrectSuggestionIndex < 0) {
+        mCorrectSuggestionIndex = i;
+      }
     }
   }
 
@@ -204,6 +294,10 @@ public class Min2mSuggest implements Suggest {
         for (int i = 0; i < mNextSuggestions.size(); i++) {
           mNextSuggestions.set(i, mNextSuggestions.get(i).toString().toUpperCase(mLocale));
         }
+      } else if (mComposingCaseMode == ComposingCaseMode.TITLE) {
+        for (int i = 0; i < mNextSuggestions.size(); i++) {
+          mNextSuggestions.set(i, applyComposingCaseMode(mNextSuggestions.get(i)));
+        }
       }
     }
     return mNextSuggestions;
@@ -214,8 +308,8 @@ public class Min2mSuggest implements Suggest {
     if (!mEnabledSuggestions) return Collections.emptyList();
 
     mCorrectSuggestionIndex = -1;
-    final boolean isFirstCharCapitalized = wordComposer.isFirstCharCapitalized();
-    final boolean isAllUpperCase = wordComposer.isAllUpperCase();
+    final boolean isFirstCharCapitalized = mComposingCaseMode == ComposingCaseMode.TITLE;
+    final boolean isAllUpperCase = mComposingCaseMode == ComposingCaseMode.UPPER;
     collectGarbage();
     java.util.Arrays.fill(mPriorities, 0);
 
@@ -231,7 +325,7 @@ public class Min2mSuggest implements Suggest {
 
     // Position 0: the key detector's output (shown in composing text).
     // The spatial scorer determines the real intended word at position 1.
-    mSuggestions.add(0, typedOriginalWord);
+    mSuggestions.add(0, applyComposingCaseMode(typedOriginalWord));
     mPriorities[0] = TYPED_WORD_FREQUENCY;
 
     final boolean hasTouchData =
@@ -360,44 +454,8 @@ public class Min2mSuggest implements Suggest {
       }
     }
 
+    normalizePronounSuggestions(mSuggestions);
     IMEUtil.removeDupes(mSuggestions, mStringPool);
-
-    // The pronoun "I" and its contractions must always be capitalized in English.
-    // The vocabulary stores everything lowercase; fix it in the suggestion list.
-    // Also handle apostrophe-less forms (e.g., "ive" → "I've") since users
-    // don't type apostrophes on compact keyboards.
-    for (int i = 0; i < mSuggestions.size(); i++) {
-      CharSequence s = mSuggestions.get(i);
-      String lower = s.toString().toLowerCase(mLocale);
-      String capitalized = null;
-      if (lower.equals("i") || lower.equals("i'm") || lower.equals("i'll")
-          || lower.equals("i'd") || lower.equals("i've")) {
-        capitalized = "I" + lower.substring(1);
-      } else if (lower.equals("im")) {
-        capitalized = "I'm";
-      } else if (lower.equals("ill")) {
-        // Don't convert "ill" — it's a common word meaning "sick"
-      } else if (lower.equals("id")) {
-        // Don't convert "id" — it's a common word (identification/Freudian)
-      } else if (lower.equals("ive")) {
-        capitalized = "I've";
-      }
-      if (capitalized != null) {
-        if (s instanceof StringBuilder) {
-          ((StringBuilder) s).setLength(0);
-          ((StringBuilder) s).append(capitalized);
-        } else {
-          mSuggestions.set(i, capitalized);
-        }
-        // Force autocorrect so ASK commits the capitalized form instead of
-        // the raw keystrokes. Position 0 = typed word slot: on a 2D keyboard
-        // the user types "i" directly and we need "I" committed. Position 1+
-        // = normal autocorrect.
-        if (i == 0 || mCorrectSuggestionIndex < 0) {
-          mCorrectSuggestionIndex = i;
-        }
-      }
-    }
 
     // Diagnostic logging
     if (mSuggestions.size() > 1) {

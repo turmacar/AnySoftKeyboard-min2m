@@ -459,6 +459,7 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
       case KeyCodes.SHIFT_LOCK:
         mShiftKeyState.toggleLocked();
         handleShift();
+        onShiftStateChangedForComposingWord();
         break;
       case KeyCodes.DELETE_WORD:
         if (ic != null) {
@@ -1096,6 +1097,21 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
   }
 
   private void handleShift() {
+    onShiftStateChangedBySuggestions();
+    // Update the strip action shift icon (1D compact keyboard)
+    if (mShiftStripAction != null) {
+      mShiftStripAction.updateShiftState(mShiftKeyState.isActive(), mShiftKeyState.isLocked());
+    }
+    // NOTE: onShiftStateChangedForComposingWord() is NOT called here.
+    // handleShift() fires on every shift state change including automatic
+    // consumption after typing a character. Updating composing case mode here
+    // would clear sentence auto-cap after the first keystroke. Instead,
+    // composing word updates are triggered only from explicit user shift
+    // actions (onRelease SHIFT, SHIFT_LOCK function key).
+  }
+
+  @Override
+  protected void onShiftStateChangedBySuggestions() {
     if (getInputView() != null) {
       Logger.d(
           TAG,
@@ -1104,10 +1120,6 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
           mShiftKeyState.isLocked());
       getInputView().setShifted(mShiftKeyState.isActive());
       getInputView().setShiftLocked(mShiftKeyState.isLocked());
-    }
-    // Update the strip action shift icon (1D compact keyboard)
-    if (mShiftStripAction != null) {
-      mShiftStripAction.updateShiftState(mShiftKeyState.isActive(), mShiftKeyState.isLocked());
     }
   }
 
@@ -1269,6 +1281,7 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
     if (primaryCode == KeyCodes.SHIFT) {
       mShiftKeyState.onRelease(mMultiTapTimeout, mLongPressTimeout);
       handleShift();
+      onShiftStateChangedForComposingWord();
     } else {
       if (mShiftKeyState.onOtherKeyReleased()) {
         updateShiftStateNow();

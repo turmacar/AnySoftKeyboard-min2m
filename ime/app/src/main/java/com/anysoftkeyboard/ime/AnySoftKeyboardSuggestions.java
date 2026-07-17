@@ -102,6 +102,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
   private boolean mAllowSuggestionsRestart = true;
 
   private boolean mJustAutoAddedWord = false;
+  private boolean mShowingPunctuationSuggestions;
+  private static final List<CharSequence> SENTENCE_PUNCTUATION_SUGGESTIONS =
+      java.util.Arrays.asList(" . ", " ! ", " ? ", " ‽ ", " \u2026 ");
 
   @VisibleForTesting
   final CancelSuggestionsAction mCancelSuggestionsAction =
@@ -590,12 +593,20 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
           isCurrentlyPredicting());
     }
 
+    mShowingPunctuationSuggestions = false;
+
     if (mWord.charCount() == 0) {
       mWordRevertLength = 0;
       mWord.reset();
       mAutoCorrectOn = isPredictionOn() && mAutoComplete && mInputFieldSupportsAutoPick;
-      if (isAlphabet(primaryCode) && mShiftKeyState.isActive()) {
+      if (isAlphabet(primaryCode) && mShiftKeyState.isActive() && !mShiftKeyState.isLocked()) {
         mWord.setFirstCharCapitalized(true);
+      }
+      // Set composing case mode once at word start. It stays until the user
+      // explicitly toggles shift (handled by onShiftStateChangedForComposingWord).
+      // This preserves sentence auto-cap through shift consumption.
+      if (mSuggest instanceof Min2mSuggest) {
+        ((Min2mSuggest) mSuggest).setComposingCaseMode(resolveComposingCaseMode());
       }
     }
 
@@ -696,7 +707,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
       ic.beginBatchEdit();
     }
     final WordComposer typedWord = prepareWordComposerForNextWord();
-    CharSequence wordToOutput = typedWord.getTypedWord();
+    final CharSequence typedWordOutput = typedWord.getTypedWord();
+    CharSequence wordToOutput = typedWordOutput;
+    boolean autoCorrectedWord = false;
     // ACTION does not invoke default picking. See
     // https://github.com/AnySoftKeyboard/AnySoftKeyboard/issues/198
     // Exception: min2m engine uses spatial scoring as the primary decoder,
@@ -704,7 +717,12 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     if (isAutoCorrect() && (!newLine || mSuggest instanceof Min2mSuggest)) {
       if (!TextUtils.equals(wordToOutput, typedWord.getPreferredWord())) {
         wordToOutput = typedWord.getPreferredWord();
+        autoCorrectedWord = true;
       }
+    }
+
+    if (mSuggest instanceof Min2mSuggest) {
+      wordToOutput = ((Min2mSuggest) mSuggest).applyComposingCaseMode(wordToOutput);
     }
     // this is a special case, when the user presses a separator WHILE
     // inside the predicted word.
@@ -712,6 +730,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     final boolean separatorInsideWord = (typedWord.cursorPosition() < typedWord.charCount());
     if (wasPredicting && !separatorInsideWord) {
       commitWordToInput(wordToOutput, typedWord.getTypedWord());
+      if (autoCorrectedWord) {
+        syncShiftStateFromCommittedAutoCorrect(wordToOutput);
+      }
       if (TextUtils.equals(typedWord.getTypedWord(), wordToOutput)) {
         // if the word typed was auto-replaced, we should not learn it.
         // Add the word to the auto dictionary if it's not a known word
@@ -729,6 +750,7 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     }
 
     boolean handledOutputToInputConnection = false;
+    boolean doubleSpacePeriod = false;
 
     if (ic != null) {
       if (isSpace) {
@@ -742,6 +764,7 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
           ic.commitText(". ", 1);
           isEndOfSentence = true;
           handledOutputToInputConnection = true;
+          doubleSpacePeriod = true;
         }
       } else if (mLastSpaceTimeStamp != NEVER_TIME_STAMP /*meaning the previous key was SPACE*/
           && (mSwapPunctuationAndSpace || newLine)
@@ -770,7 +793,16 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
     if (isEndOfSentence) {
       mSuggest.resetNextWordSentence();
-      clearSuggestions();
+      if (doubleSpacePeriod) {
+        // Show sentence-ending punctuation alternatives with "." preselected.
+        // The period is already committed; picking another replaces it.
+        // Typing the next word dismisses these automatically.
+        mShowingPunctuationSuggestions = true;
+        mPunctuationFirstPick = true;
+        setSuggestions(SENTENCE_PUNCTUATION_SUGGESTIONS, 0);
+      } else {
+        clearSuggestions();
+      }
     } else {
       setSuggestions(mSuggest.getNextSuggestions(wordToOutput, typedWord.isAllUpperCase()), -1);
     }
@@ -968,6 +1000,7 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
   @CallSuper
   protected void abortCorrectionAndResetPredictionState(boolean disabledUntilNextInputStart) {
+    mShowingPunctuationSuggestions = false;
     mSuggest.resetNextWordSentence();
 
     mLastSpaceTimeStamp = NEVER_TIME_STAMP;
@@ -1131,6 +1164,10 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
   @CallSuper
   public void pickSuggestionManually(
       int index, CharSequence suggestion, boolean withAutoSpaceEnabled) {
+    if (mShowingPunctuationSuggestions) {
+      handlePunctuationPick(suggestion);
+      return;
+    }
     mWordRevertLength = 0; // no reverts
     final InputConnection ic = getCurrentInputConnection();
     if (ic != null) {
@@ -1218,6 +1255,36 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     clearSuggestions();
   }
 
+  private boolean mPunctuationFirstPick = true;
+
+  private void handlePunctuationPick(@NonNull CharSequence punctuation) {
+    final String punct = punctuation.toString().trim();
+    final InputConnection ic = getCurrentInputConnection();
+    if (ic != null) {
+      ic.beginBatchEdit();
+      if (mPunctuationFirstPick) {
+        // First pick replaces the ". " from double-space-to-period.
+        if (!".".equals(punct)) {
+          ic.deleteSurroundingText(2, 0);
+          ic.commitText(punct + " ", 1);
+        }
+        mPunctuationFirstPick = false;
+      } else {
+        // Subsequent picks: delete trailing space, append punctuation + space.
+        // "hello! " → "hello!! "
+        ic.deleteSurroundingText(1, 0);
+        ic.commitText(punct + " ", 1);
+      }
+      markExpectingSelectionUpdate();
+      ic.endBatchEdit();
+    }
+    // Keep punctuation suggestions visible so the user can tap repeatedly
+    // for repetition (e.g. "!!!", "???"). The flag stays true; suggestions
+    // are dismissed automatically when the user starts typing a letter.
+    // Clear the highlight after each pick so the tap indicator doesn't linger.
+    setSuggestions(SENTENCE_PUNCTUATION_SUGGESTIONS, -1);
+  }
+
   private boolean isCursorTouchingWord() {
     InputConnection ic = getCurrentInputConnection();
     if (ic == null) {
@@ -1294,6 +1361,110 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
   public boolean preferCapitalization() {
     return mWord.isFirstCharCapitalized();
+  }
+
+  protected final void onShiftStateChangedForComposingWord() {
+    if (!(mSuggest instanceof Min2mSuggest) || !isCurrentlyPredicting()) {
+      return;
+    }
+
+    final Min2mSuggest min2mSuggest = (Min2mSuggest) mSuggest;
+    min2mSuggest.setComposingCaseMode(resolveComposingCaseMode());
+    updateComposingWordCaseFlags();
+
+    final InputConnection ic = getCurrentInputConnection();
+    if (ic != null) {
+      final CharSequence transformedComposing = min2mSuggest.applyComposingCaseMode(mWord.getTypedWord());
+      markExpectingSelectionUpdate();
+      ic.setComposingText(transformedComposing, 1);
+      if (mWord.cursorPosition() != mWord.charCount()) {
+        final int cursor = getCursorPosition();
+        if (cursor >= 0) {
+          ic.setSelection(cursor, cursor);
+        }
+      }
+    }
+
+    performUpdateSuggestions();
+  }
+
+  protected void onShiftStateChangedBySuggestions() {
+    final InputViewBinder inputView = getInputView();
+    if (inputView != null) {
+      inputView.setShifted(mShiftKeyState.isActive());
+      inputView.setShiftLocked(mShiftKeyState.isLocked());
+    }
+  }
+
+  private Min2mSuggest.ComposingCaseMode resolveComposingCaseMode() {
+    if (mShiftKeyState.isLocked()) {
+      return Min2mSuggest.ComposingCaseMode.UPPER;
+    }
+    if (mShiftKeyState.isActive()) {
+      return Min2mSuggest.ComposingCaseMode.TITLE;
+    }
+    return Min2mSuggest.ComposingCaseMode.LOWER;
+  }
+
+  private void updateComposingWordCaseFlags() {
+    if (mWord.isEmpty()) {
+      return;
+    }
+    final Min2mSuggest.ComposingCaseMode mode = resolveComposingCaseMode();
+    mWord.setFirstCharCapitalized(mode == Min2mSuggest.ComposingCaseMode.TITLE);
+  }
+
+  private void syncShiftStateFromCommittedAutoCorrect(@NonNull CharSequence committedWord) {
+    int letterCount = 0;
+    int uppercaseLetterCount = 0;
+    int firstLetter = -1;
+
+    for (int index = 0; index < committedWord.length(); ) {
+      final int codePoint = Character.codePointAt(committedWord, index);
+      index += Character.charCount(codePoint);
+      if (!Character.isLetter(codePoint)) {
+        continue;
+      }
+      if (firstLetter < 0) {
+        firstLetter = codePoint;
+      }
+      letterCount++;
+      if (Character.isUpperCase(codePoint)) {
+        uppercaseLetterCount++;
+      }
+    }
+
+    if (letterCount == 0) {
+      return;
+    }
+
+    final boolean shouldLock = letterCount > 1 && uppercaseLetterCount == letterCount;
+    final boolean shouldActivateFromWord = !shouldLock && Character.isUpperCase(firstLetter);
+
+    boolean shouldActivate = shouldActivateFromWord;
+    if (!shouldLock && !shouldActivateFromWord) {
+      final InputConnection ic = getCurrentInputConnection();
+      final EditorInfo editorInfo = getCurrentInputEditorInfo();
+      final boolean inputSaysCaps =
+          ic != null
+              && editorInfo != null
+              && editorInfo.inputType != EditorInfo.TYPE_NULL
+              && ic.getCursorCapsMode(editorInfo.inputType) != 0;
+      // Preserve sentence auto-cap if the editor context says next char should be capped.
+      shouldActivate = inputSaysCaps;
+    }
+
+    if (shouldLock) {
+      if (!mShiftKeyState.isLocked()) {
+        mShiftKeyState.toggleLocked();
+      }
+    } else {
+      if (mShiftKeyState.isLocked()) {
+        mShiftKeyState.toggleLocked();
+      }
+      mShiftKeyState.setActiveState(shouldActivate);
+    }
+    onShiftStateChangedBySuggestions();
   }
 
   public void closeDictionaries() {
