@@ -16,17 +16,16 @@ import com.anysoftkeyboard.keyboards.Keyboard;
 import com.anysoftkeyboard.quicktextkeys.TagsExtractor;
 import com.anysoftkeyboard.quicktextkeys.TagsExtractorImpl;
 import com.anysoftkeyboard.utils.IMEUtil;
+import com.menny.android.anysoftkeyboard.BuildConfig;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Alternative suggestion engine that uses a large open-source vocabulary database (~300K words) with
- * full-range integer frequencies for scoring, replacing ASK's dictionary-based fuzzy matching.
- *
- * <p>Phase A: vocabulary-based prefix matching with frequency ranking. Phase B (future): Bayesian
- * spatial disambiguation using touch coordinates. Phase C (future): n-gram context scoring.
+ * Alternative suggestion engine using a 307K-word open-source vocabulary with Bayesian spatial
+ * disambiguation (HMM scoring), kd-tree candidate search, n-gram context boosting, and
+ * shift-aware composing case mode.
  *
  * <p>Delegates user dictionary, contacts, abbreviations, and auto-text to ASK's existing {@link
  * SuggestionsProvider}.
@@ -51,7 +50,6 @@ public class Min2mSuggest implements Suggest {
   @NonNull private final HMMScorer mHmmScorer;
   @NonNull private final BayesianCandidateRanker mRanker;
   @NonNull private final SpatialIndex mSpatialIndex;
-  @NonNull private final Context mContext;
 
   private final List<CharSequence> mSuggestions = new ArrayList<>();
   private final List<CharSequence> mNextSuggestions = new ArrayList<>();
@@ -64,12 +62,9 @@ public class Min2mSuggest implements Suggest {
   private int mPrefMaxSuggestions = 12;
   private int mCorrectSuggestionIndex = -1;
   private boolean mEnabledSuggestions;
-  private int mCommonalityMaxLengthDiff = 1;
-  private int mCommonalityMaxDistance = 1;
   @NonNull private ComposingCaseMode mComposingCaseMode = ComposingCaseMode.LOWER;
 
   public Min2mSuggest(@NonNull Context context) {
-    mContext = context;
     mSuggestionsProvider = new SuggestionsProvider(context);
     mVocabulary = new Min2mVocabulary();
     mSpatialScorer = new SpatialScorer();
@@ -98,7 +93,6 @@ public class Min2mSuggest implements Suggest {
 
   @VisibleForTesting
   public Min2mSuggest(@NonNull SuggestionsProvider provider, @NonNull Min2mVocabulary vocabulary) {
-    mContext = null;
     mSuggestionsProvider = provider;
     mVocabulary = vocabulary;
     mSpatialScorer = new SpatialScorer();
@@ -213,9 +207,8 @@ public class Min2mSuggest implements Suggest {
   public void setCorrectionMode(
       boolean enabledSuggestions, int maxLengthDiff, int maxDistance, boolean splitWords) {
     mEnabledSuggestions = enabledSuggestions;
-    mCommonalityMaxLengthDiff = maxLengthDiff;
-    mCommonalityMaxDistance = maxDistance;
-    // splitWords not used in min2m engine (future: spatial scoring handles this better)
+    // maxLengthDiff, maxDistance, splitWords are ASK fuzzy-match params;
+    // min2m uses spatial/HMM scoring instead.
   }
 
   @Override
@@ -434,9 +427,10 @@ public class Min2mSuggest implements Suggest {
       }
       long tScore = System.nanoTime() - tScore0;
 
-      // Performance logging (every call for now, can throttle later)
-      Logger.d(TAG, "perf: query=%.2fms (%d candidates), score=%.2fms (%d scored), total=%.2fms",
-          tQuery / 1e6, candidates.size(), tScore / 1e6, scoredCount, (tQuery + tScore) / 1e6);
+      if (BuildConfig.DEBUG) {
+        Logger.d(TAG, "perf: query=%.2fms (%d candidates), score=%.2fms (%d scored), total=%.2fms",
+            tQuery / 1e6, candidates.size(), tScore / 1e6, scoredCount, (tQuery + tScore) / 1e6);
+      }
     }
 
     // User-learned words and contacts
@@ -457,8 +451,7 @@ public class Min2mSuggest implements Suggest {
     normalizePronounSuggestions(mSuggestions);
     IMEUtil.removeDupes(mSuggestions, mStringPool);
 
-    // Diagnostic logging
-    if (mSuggestions.size() > 1) {
+    if (BuildConfig.DEBUG && mSuggestions.size() > 1) {
       StringBuilder logMsg = new StringBuilder();
       logMsg.append("typed='").append(typedOriginalWord).append("' → [");
       int logCount = Math.min(mSuggestions.size(), 6);
