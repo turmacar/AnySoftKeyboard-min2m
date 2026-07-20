@@ -6,7 +6,7 @@
               index="1" defaultEnabled="true"
               physicalKeyboardMappingResId="@xml/english_physical" />
     <Keyboard nameResId="@string/min2m_keyboard"
-              layoutResId="@xml/qwerty_min2m" landscapeResId="@xml/qwerty_min2m"
+              layoutResId="@xml/qwerty_min2m" landscapeResId="@xml/qwerty_min2m_land"
               id="6fca18ac-82b7-44d7-a2da-f4eb2c6813db"
               defaultDictionaryLocale="en" description="@string/min2m_keyboard_description"
               index="2" defaultEnabled="false"
