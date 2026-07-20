@@ -17,8 +17,11 @@ import com.anysoftkeyboard.quicktextkeys.TagsExtractor;
 import com.anysoftkeyboard.quicktextkeys.TagsExtractorImpl;
 import com.anysoftkeyboard.utils.IMEUtil;
 import com.menny.android.anysoftkeyboard.BuildConfig;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
@@ -50,6 +53,9 @@ public class Min2mSuggest implements Suggest {
   @NonNull private final HMMScorer mHmmScorer;
   @NonNull private final BayesianCandidateRanker mRanker;
   @NonNull private final SpatialIndex mSpatialIndex;
+
+  /** Word→emoji mapping from Unicode CLDR data. Loaded from assets/emoji_map.txt. */
+  @NonNull private volatile HashMap<String, String> mEmojiMap = new HashMap<>();
 
   private final List<CharSequence> mSuggestions = new ArrayList<>();
   private final List<CharSequence> mNextSuggestions = new ArrayList<>();
@@ -88,6 +94,7 @@ public class Min2mSuggest implements Suggest {
         }
       }
       Logger.d(TAG, "Vocabulary background load complete");
+      loadEmojiMap(context);
     }, "min2m-vocab-load").start();
   }
 
@@ -434,6 +441,9 @@ public class Min2mSuggest implements Suggest {
     if (mCorrectSuggestionIndex >= mSuggestions.size()) {
       mCorrectSuggestionIndex = mSuggestions.size() > 1 ? 1 : -1;
     }
+
+    // Inject emoji suggestions for the typed word or top candidate
+    injectEmojiSuggestions(lowerOriginalWord);
 
     if (BuildConfig.DEBUG && mSuggestions.size() > 1) {
       StringBuilder logMsg = new StringBuilder();
@@ -825,6 +835,58 @@ public class Min2mSuggest implements Suggest {
     // score = normalized * 60 - 60
     double normalized = (double) (mPriorities[1] - 1) / (Integer.MAX_VALUE / 2 - 2);
     return (float) (normalized * 60.0 - 60.0);
+  }
+
+  /**
+   * Loads the word→emoji mapping from assets/emoji_map.txt.
+   * Format: one "word|emoji" per line, pipe-delimited.
+   */
+  private void loadEmojiMap(@NonNull Context context) {
+    HashMap<String, String> map = new HashMap<>(2048);
+    try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(context.getAssets().open("emoji_map.txt"), "UTF-8"))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        int sep = line.indexOf('|');
+        if (sep > 0 && sep < line.length() - 1) {
+          map.put(line.substring(0, sep), line.substring(sep + 1));
+        }
+      }
+    } catch (Exception e) {
+      Logger.w(TAG, "Failed to load emoji_map.txt: %s", e.getMessage());
+    }
+    mEmojiMap = map;
+    Logger.d(TAG, "Loaded %d word→emoji mappings", map.size());
+  }
+
+  /**
+   * Injects emoji suggestions into the candidate list for the typed/corrected word.
+   * Emoji are inserted after the top 3 word suggestions (or at the end if fewer).
+   * Checks both the typed word and the auto-correct candidate for emoji matches.
+   */
+  private void injectEmojiSuggestions(@NonNull String lowerTypedWord) {
+    HashMap<String, String> emojiMap = mEmojiMap;
+    if (emojiMap.isEmpty() || mSuggestions.isEmpty()) return;
+
+    // Check typed word first, then auto-correct candidate
+    String emoji = emojiMap.get(lowerTypedWord);
+    if (emoji == null && mCorrectSuggestionIndex > 0
+        && mCorrectSuggestionIndex < mSuggestions.size()) {
+      String corrected = mSuggestions.get(mCorrectSuggestionIndex).toString().toLowerCase(mLocale);
+      emoji = emojiMap.get(corrected);
+    }
+
+    if (emoji != null) {
+      // Insert after position 2 (or at end if list is shorter)
+      int insertPos = Math.min(2, mSuggestions.size());
+      mSuggestions.add(insertPos, emoji);
+      // Shift priorities to accommodate
+      if (insertPos < mPriorities.length - 1) {
+        System.arraycopy(mPriorities, insertPos, mPriorities, insertPos + 1,
+            mPriorities.length - insertPos - 1);
+        mPriorities[insertPos] = 0; // emoji has no priority ranking
+      }
+    }
   }
 
   /** Bridge callback that inserts ASK dictionary results into our ranked suggestion list. */
