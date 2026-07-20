@@ -90,10 +90,9 @@ public class HMMScorer {
 
   /**
    * Scores how well a touch sequence matches a candidate word using the
-   * forward algorithm over the character-level HMM.
+   * forward algorithm over the character-level HMM. Uses the normal sigma.
    *
    * <p>Returns log P(touches | word), a negative value where higher = better.
-   * Comparable to SpatialScorer.scoreWord() output.
    *
    * @param candidate the candidate word (lowercase)
    * @param touchXs per-keystroke X coordinates
@@ -103,6 +102,22 @@ public class HMMScorer {
    */
   public float scoreWord(
       @NonNull String candidate, float[] touchXs, float[] touchYs, int touchCount) {
+    return scoreWord(candidate, touchXs, touchYs, touchCount, mSpatialScorer.getSigmaSquared());
+  }
+
+  /**
+   * Scores using a specific sigma squared value (for dual-sigma blending).
+   *
+   * @param candidate the candidate word (lowercase)
+   * @param touchXs per-keystroke X coordinates
+   * @param touchYs per-keystroke Y coordinates
+   * @param touchCount number of touch positions
+   * @param sigmaSquared the Gaussian σ² to use for emission probabilities
+   * @return log-likelihood (negative; higher = better match)
+   */
+  public float scoreWord(
+      @NonNull String candidate, float[] touchXs, float[] touchYs,
+      int touchCount, float sigmaSquared) {
     if (!mSpatialScorer.hasKeyboard() || touchCount == 0) return 0f;
 
     // Extract candidate code points
@@ -125,7 +140,7 @@ public class HMMScorer {
     // Pre-compute emission log-probabilities: logEmit[t][c]
     // = log P(touch_t | character_c) = -d^2 / (2 * sigma^2)
     // Plus a uniform floor for touches with unknown key positions.
-    float sigmaSquared = mSpatialScorer.getSigmaSquared();
+    // Use the provided sigmaSquared (may be normal or tight)
     int T = touchCount;
     int C = candidateLen;
 

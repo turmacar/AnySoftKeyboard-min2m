@@ -10,77 +10,148 @@ import java.util.Map;
  * Computes spatial likelihood scores: P(touches | word). For each candidate word, measures how well
  * the actual touch positions match the expected key positions on the keyboard.
  *
+ * <p>All coordinates are in Minuum's normalized [0,1] space. Key centers and touch positions
+ * are normalized at registration/query time using the keyboard's bounding box. This makes
+ * sigma values device/resolution-independent and allows direct use of Minuum's tuned parameters.
+ *
  * <p>Uses a Gaussian model: each touch contributes log P = -distance² / (2σ²), summed across all
  * character positions.
  */
 public class SpatialScorer {
-  /** Map from lowercase character code to its key center (x, y). */
+  /** Map from lowercase character code to its key center in normalized [0,1] space. */
   private final Map<Integer, float[]> mKeyCenters = new HashMap<>();
 
-  /** Gaussian width parameter squared. Controls tolerance for off-center touches. */
+  /**
+   * Normal Gaussian σ² in normalized space — forgiving, handles sloppy typing.
+   * Minuum: 0.0577 (~1.5 key widths on a 26-key row).
+   */
   private float mSigmaSquared = 1f;
 
-  /** Average key width, used as fallback sigma and for normalization. */
+  /**
+   * Tight Gaussian σ² in normalized space — precise, favors exactly-hit keys.
+   * Minuum: 0.0077 (~0.2 key widths). Being 1 key off produces a massive penalty
+   * (~-12.5 per char on a 26-key 1D keyboard), giving spatial evidence strong
+   * discrimination without needing α/β weight distortion.
+   */
+  private float mTightSigmaSquared = 1f;
+
+  /** Average key width in pixels (pre-normalization), for diagnostics. */
   private float mAvgKeyWidth = 1f;
 
   /**
-   * Minimum σ in pixels, based on physical finger size (~7-10mm ≈ 40-60px on
-   * a typical 400-440 dpi phone screen). Prevents σ from being too narrow on
-   * compact/1D keyboards where keys are much smaller than a fingertip.
-   * Without this floor, being off by 1 key on a 28px-wide 1D keyboard gives
-   * a devastating −2.0 per-character penalty (σ=14px), making it impossible
-   * for "well" to beat "zoo" when touches land 1 key off.
+   * Normal sigma from Minuum's InitializeSimpleDisambiguateParams.
+   * 0.0577 normalized ≈ 1.5 key widths on a 26-key row.
    */
-  private static final float MIN_SIGMA_PX = 48f;
+  private static final float NORMAL_SIGMA = 0.0577f;
+
+  /**
+   * Tight sigma for precision discrimination. Minuum used 0.0077 but that's
+   * too tight for our touch precision — both correct and 1-key-off touches
+   * get equally massive penalties, eliminating discrimination. At 0.02
+   * (~0.5 key widths on a 26-key row), being 1 key off gets penalty
+   * -d²/(2σ²) ≈ -0.038²/0.0008 ≈ -1.9 per char, while a centered touch
+   * gets ~0. This provides strong discrimination without saturating.
+   */
+  private static final float TIGHT_SIGMA = 0.02f;
+
+  /** Keyboard bounding box in pixels, for normalizing touch coordinates. */
+  private float mKeyboardMinX;
+  private float mKeyboardMaxX;
+  private float mKeyboardMinY;
+  private float mKeyboardMaxY;
+  private float mKeyboardWidth = 1f;
+  private float mKeyboardHeight = 1f;
 
   private boolean mHasKeyboard = false;
 
   /**
-   * Registers the current keyboard geometry. Call this when the keyboard changes.
+   * Registers the current keyboard geometry. Normalizes all key centers to [0,1]
+   * coordinate space using the keyboard's bounding box, matching Minuum's approach.
    *
    * @param keys the list of keys from the current keyboard
    */
   public void registerKeyboard(@NonNull List<Keyboard.Key> keys) {
     mKeyCenters.clear();
+
+    // First pass: compute bounding box and average key width in pixel space
+    float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE;
+    float minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
     float totalWidth = 0;
     int letterKeyCount = 0;
+
+    // Temporary pixel-space centers
+    Map<Integer, float[]> pixelCenters = new HashMap<>();
 
     for (Keyboard.Key key : keys) {
       int code = key.getPrimaryCode();
       if (code <= 0) continue;
 
-      // center = (key.x + key.width/2, key.y + key.height/2)
       float cx = key.x + key.width / 2f;
       float cy = key.y + key.height / 2f;
+      float left = key.x;
+      float right = key.x + key.width;
+      float top = key.y;
+      float bottom = key.y + key.height;
 
-      // Store lowercase mapping so candidate lookup is case-insensitive
+      if (left < minX) minX = left;
+      if (right > maxX) maxX = right;
+      if (top < minY) minY = top;
+      if (bottom > maxY) maxY = bottom;
+
       int lowerCode = Character.toLowerCase(code);
-      if (!mKeyCenters.containsKey(lowerCode)) {
-        mKeyCenters.put(lowerCode, new float[] {cx, cy});
+      if (!pixelCenters.containsKey(lowerCode)) {
+        pixelCenters.put(lowerCode, new float[] {cx, cy});
       }
 
-      // Track letter keys for average width calculation
       if (Character.isLetter(code)) {
         totalWidth += key.width;
         letterKeyCount++;
       }
     }
 
+    // Store bounding box for normalizing touch coordinates later
+    mKeyboardMinX = minX;
+    mKeyboardMaxX = maxX;
+    mKeyboardMinY = minY;
+    mKeyboardMaxY = maxY;
+    mKeyboardWidth = Math.max(1f, maxX - minX);
+    mKeyboardHeight = Math.max(1f, maxY - minY);
+
     if (letterKeyCount > 0) {
       mAvgKeyWidth = totalWidth / letterKeyCount;
-      // σ = max(avgKeyWidth / 2, MIN_SIGMA_PX)
-      // On a full 2D keyboard (key width ~100px), σ ≈ 50px (natural).
-      // On a 1D keyboard (key width ~28px), σ = 48px (floor), tolerating
-      // touches up to ~1.7 keys off before the Gaussian penalty exceeds −1.
-      float sigma = Math.max(mAvgKeyWidth * 0.5f, MIN_SIGMA_PX);
-      mSigmaSquared = sigma * sigma;
     }
+
+    // Second pass: normalize centers to [0,1]
+    for (Map.Entry<Integer, float[]> entry : pixelCenters.entrySet()) {
+      float[] px = entry.getValue();
+      float nx = (px[0] - minX) / mKeyboardWidth;
+      float ny = (px[1] - minY) / mKeyboardHeight;
+      mKeyCenters.put(entry.getKey(), new float[] {nx, ny});
+    }
+
+    // Use Minuum's tuned sigma values directly in normalized space
+    mSigmaSquared = NORMAL_SIGMA * NORMAL_SIGMA;
+    mTightSigmaSquared = TIGHT_SIGMA * TIGHT_SIGMA;
 
     mHasKeyboard = !mKeyCenters.isEmpty();
   }
 
   public boolean hasKeyboard() {
     return mHasKeyboard;
+  }
+
+  /**
+   * Normalizes a pixel-space touch X coordinate to [0,1] using the keyboard bounding box.
+   */
+  public float normalizeTouchX(float pixelX) {
+    return (pixelX - mKeyboardMinX) / mKeyboardWidth;
+  }
+
+  /**
+   * Normalizes a pixel-space touch Y coordinate to [0,1] using the keyboard bounding box.
+   */
+  public float normalizeTouchY(float pixelY) {
+    return (pixelY - mKeyboardMinY) / mKeyboardHeight;
   }
 
   /**
@@ -241,6 +312,10 @@ public class SpatialScorer {
 
   public float getSigmaSquared() {
     return mSigmaSquared;
+  }
+
+  public float getTightSigmaSquared() {
+    return mTightSigmaSquared;
   }
 
   public float getAvgKeyWidth() {

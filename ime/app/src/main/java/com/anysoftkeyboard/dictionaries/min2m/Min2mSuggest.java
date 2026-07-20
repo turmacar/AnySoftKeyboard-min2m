@@ -303,6 +303,14 @@ public class Min2mSuggest implements Suggest {
   //   Phase 2 (Relaxed): ±1 length (edit distance), larger K
   //   Phase 3 (Loose): ±2 length, full K, plus space-omission candidates
 
+  /**
+   * Tracks the typed word's spatial priority across all disambiguation phases.
+   * Set when the typed word appears in the scored candidate list. Used for
+   * auto-correct decision: only auto-correct if the spatial winner beats this.
+   * Reset to -1 at the start of each getSuggestions() call.
+   */
+  private int mTypedWordSpatialPriority = -1;
+
   /** KD-tree K per phase. Phase 1 is tight, Phase 3 is the current full search. */
   private static final int PHASE1_K = 40;
   private static final int PHASE2_K = 70;
@@ -310,19 +318,22 @@ public class Min2mSuggest implements Suggest {
 
   /**
    * Confidence threshold for Phase 1 early exit. If the top candidate's
-   * Bayesian score exceeds this, we skip Phases 2 and 3. Modeled on
-   * Minuum's 0.1f threshold passed to Disambiguator_disambiguate().
-   * Our score scale is different (log-space, range ~[-60, 0]), so we use
-   * a threshold that represents "strong match": the spatial fit is good
-   * and the word is reasonably common.
+   * Bayesian score exceeds this, we skip Phases 2 and 3. With pure Bayesian
+   * scoring (α=1, β=1), scores are natural log-probabilities:
+   * - Common word + good spatial match: ~-3 to -5
+   * - Medium word + decent match: ~-7 to -10
+   * - Rare word or poor match: < -15
+   *
+   * Threshold of -8.0 means "reasonably common word with decent spatial fit".
    */
-  private static final float PHASE1_CONFIDENCE_THRESHOLD = -3.0f;
+  private static final float PHASE1_CONFIDENCE_THRESHOLD = -8.0f;
 
   @Override
   public List<CharSequence> getSuggestions(WordComposer wordComposer) {
     if (!mEnabledSuggestions) return Collections.emptyList();
 
     mCorrectSuggestionIndex = -1;
+    mTypedWordSpatialPriority = -1;
     final boolean isFirstCharCapitalized = mComposingCaseMode == ComposingCaseMode.TITLE;
     final boolean isAllUpperCase = mComposingCaseMode == ComposingCaseMode.UPPER;
     collectGarbage();
@@ -349,13 +360,15 @@ public class Min2mSuggest implements Suggest {
     int typedWordSpatialPriority = -1;
 
     if (mVocabulary.isOpen()) {
-      // Extract touch coordinates early — needed for both kd-tree query and HMM scoring
+      // Extract touch coordinates and normalize to [0,1] using the keyboard
+      // bounding box. Matches Minuum's normalized coordinate space so sigma
+      // values from Minuum's tuned parameters apply directly.
       float[] touchXs = new float[touchCount];
       float[] touchYs = new float[touchCount];
       if (hasTouchData) {
         for (int i = 0; i < touchCount; i++) {
-          touchXs[i] = wordComposer.getTouchX(i);
-          touchYs[i] = wordComposer.getTouchY(i);
+          touchXs[i] = mSpatialScorer.normalizeTouchX(wordComposer.getTouchX(i));
+          touchYs[i] = mSpatialScorer.normalizeTouchY(wordComposer.getTouchY(i));
         }
       }
 
@@ -374,8 +387,9 @@ public class Min2mSuggest implements Suggest {
             touchXs, touchYs, touchCount, lowerOriginalWord,
             isFirstCharCapitalized, isAllUpperCase, bigramNextWords);
 
-        // Track typed word's priority for auto-correction decision
-        typedWordSpatialPriority = findTypedWordPriority(lowerOriginalWord);
+        // mTypedWordSpatialPriority was set during scoring if the typed
+        // word appeared in any phase's candidate list
+        typedWordSpatialPriority = mTypedWordSpatialPriority;
       } else {
         // Fallback: brute-force candidate pool (pre-kd-tree path)
         phasesCompleted = 0;
@@ -413,6 +427,13 @@ public class Min2mSuggest implements Suggest {
 
     normalizePronounSuggestions(mSuggestions);
     IMEUtil.removeDupes(mSuggestions, mStringPool);
+
+    // Clamp correction index: removeDupes may have shrunk the list,
+    // and ASK bridge callbacks may have set mCorrectSuggestionIndex
+    // to a position that no longer exists.
+    if (mCorrectSuggestionIndex >= mSuggestions.size()) {
+      mCorrectSuggestionIndex = mSuggestions.size() > 1 ? 1 : -1;
+    }
 
     if (BuildConfig.DEBUG && mSuggestions.size() > 1) {
       StringBuilder logMsg = new StringBuilder();
@@ -599,8 +620,9 @@ public class Min2mSuggest implements Suggest {
       }
 
       // Each half must be a good spatial match on its own.
-      // Threshold: -4.0 means roughly -1.0 per character for short words.
-      if (bestFirstScore < -4.0f || bestSecondScore < -4.0f) {
+      // With pure Bayesian scoring, a good 3-char common word scores ~-5,
+      // a decent 4-char word ~-7. Threshold -8.0 allows reasonable matches.
+      if (bestFirstScore < -8.0f || bestSecondScore < -8.0f) {
         continue;
       }
 
@@ -625,6 +647,7 @@ public class Min2mSuggest implements Suggest {
 
   /**
    * Scores a list of candidates and inserts them into the suggestion list.
+   * Uses dual-sigma blending (normal + tight HMM evaluation).
    * Returns the spatial priority of the typed word if found, or -1.
    */
   private int scoreCandidates(
@@ -634,17 +657,26 @@ public class Min2mSuggest implements Suggest {
       boolean isFirstCharCapitalized, boolean isAllUpperCase,
       @NonNull java.util.Set<String> bigramNextWords) {
     int typedWordSpatialPriority = -1;
+    float normalSigmaSq = mSpatialScorer.getSigmaSquared();
+    float tightSigmaSq = mSpatialScorer.getTightSigmaSquared();
+
     for (Min2mVocabulary.CandidateWord candidate : candidates) {
       if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
           && !mVocabulary.isPlausibleWord(candidate.text)) {
         continue;
       }
 
-      float spatialLogP = hasTouchData
-          ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
-          : 0f;
-      int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
-      float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
+      float bayesianScore;
+      if (hasTouchData) {
+        float normalLogP = mHmmScorer.scoreWord(
+            candidate.text, touchXs, touchYs, touchCount, normalSigmaSq);
+        float tightLogP = mHmmScorer.scoreWord(
+            candidate.text, touchXs, touchYs, touchCount, tightSigmaSq);
+        int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
+        bayesianScore = mRanker.score(candidate.frequency, normalLogP, tightLogP, candidateLen);
+      } else {
+        bayesianScore = mRanker.scoreFrequencyOnly(candidate.frequency);
+      }
 
       if (bigramNextWords.contains(candidate.text)) {
         bayesianScore += 3.0f;
@@ -665,7 +697,7 @@ public class Min2mSuggest implements Suggest {
 
   /**
    * Scores candidates and returns the top Bayesian score (not int-priority).
-   * Used for confidence checking in progressive disambiguation.
+   * Uses dual-sigma blending. Used for confidence checking in progressive disambiguation.
    */
   private float scoreCandidatesAndGetTopScore(
       @NonNull List<Min2mVocabulary.CandidateWord> candidates,
@@ -674,20 +706,64 @@ public class Min2mSuggest implements Suggest {
       boolean isFirstCharCapitalized, boolean isAllUpperCase,
       @NonNull java.util.Set<String> bigramNextWords) {
     float topScore = Float.NEGATIVE_INFINITY;
+    float normalSigmaSq = mSpatialScorer.getSigmaSquared();
+    float tightSigmaSq = mSpatialScorer.getTightSigmaSquared();
+
+    // Diagnostic: track top 3 candidates with score breakdowns
+    String[] diagWords = BuildConfig.DEBUG ? new String[3] : null;
+    float[] diagNormal = BuildConfig.DEBUG ? new float[3] : null;
+    float[] diagTight = BuildConfig.DEBUG ? new float[3] : null;
+    float[] diagFreq = BuildConfig.DEBUG ? new float[3] : null;
+    float[] diagTotal = BuildConfig.DEBUG ? new float[3] : null;
+    int diagCount = 0;
+
     for (Min2mVocabulary.CandidateWord candidate : candidates) {
       if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
           && !mVocabulary.isPlausibleWord(candidate.text)) {
         continue;
       }
 
-      float spatialLogP = hasTouchData
-          ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
-          : 0f;
-      int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
-      float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
+      float bayesianScore;
+      float normalLogP = 0f, tightLogP = 0f;
+      if (hasTouchData) {
+        normalLogP = mHmmScorer.scoreWord(
+            candidate.text, touchXs, touchYs, touchCount, normalSigmaSq);
+        tightLogP = mHmmScorer.scoreWord(
+            candidate.text, touchXs, touchYs, touchCount, tightSigmaSq);
+        int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
+        bayesianScore = mRanker.score(candidate.frequency, normalLogP, tightLogP, candidateLen);
+      } else {
+        bayesianScore = mRanker.scoreFrequencyOnly(candidate.frequency);
+      }
 
       if (bigramNextWords.contains(candidate.text)) {
         bayesianScore += 3.0f;
+      }
+
+      // Track top 3 for diagnostics
+      if (BuildConfig.DEBUG && hasTouchData) {
+        float logFreq = (float) Math.log((double) candidate.frequency / mRanker.getMaxFrequency());
+        if (diagCount < 3) {
+          diagWords[diagCount] = candidate.text;
+          diagNormal[diagCount] = normalLogP;
+          diagTight[diagCount] = tightLogP;
+          diagFreq[diagCount] = logFreq;
+          diagTotal[diagCount] = bayesianScore;
+          diagCount++;
+        } else {
+          // Replace the worst of the 3
+          int worst = 0;
+          for (int d = 1; d < 3; d++) {
+            if (diagTotal[d] < diagTotal[worst]) worst = d;
+          }
+          if (bayesianScore > diagTotal[worst]) {
+            diagWords[worst] = candidate.text;
+            diagNormal[worst] = normalLogP;
+            diagTight[worst] = tightLogP;
+            diagFreq[worst] = logFreq;
+            diagTotal[worst] = bayesianScore;
+          }
+        }
       }
 
       if (bayesianScore > topScore) {
@@ -696,14 +772,41 @@ public class Min2mSuggest implements Suggest {
 
       int scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
 
+      // Track typed word's spatial priority for auto-correct decision.
+      // Must be done BEFORE insertSuggestion, which deduplicates against
+      // position 0 (the typed word) and would prevent findTypedWordPriority
+      // from finding it in the ranked list.
       if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
-        // tracked externally via findTypedWordPriority
+        mTypedWordSpatialPriority = scaledFreq;
       }
 
       StringBuilder sb = getStringBuilderFromPool(
           candidate.text, isFirstCharCapitalized, isAllUpperCase);
       insertSuggestion(sb, scaledFreq);
     }
+
+    if (BuildConfig.DEBUG && diagCount > 0) {
+      // Sort diagnostics by total score descending
+      for (int i = 0; i < diagCount - 1; i++) {
+        for (int j = i + 1; j < diagCount; j++) {
+          if (diagTotal[j] > diagTotal[i]) {
+            String tw = diagWords[i]; diagWords[i] = diagWords[j]; diagWords[j] = tw;
+            float tn = diagNormal[i]; diagNormal[i] = diagNormal[j]; diagNormal[j] = tn;
+            float tt = diagTight[i]; diagTight[i] = diagTight[j]; diagTight[j] = tt;
+            float tf = diagFreq[i]; diagFreq[i] = diagFreq[j]; diagFreq[j] = tf;
+            float tl = diagTotal[i]; diagTotal[i] = diagTotal[j]; diagTotal[j] = tl;
+          }
+        }
+      }
+      StringBuilder sb = new StringBuilder("σ-diag: ");
+      for (int d = 0; d < diagCount; d++) {
+        if (d > 0) sb.append(" | ");
+        sb.append(String.format("%s(f=%.1f n=%.1f t=%.1f →%.1f)",
+            diagWords[d], diagFreq[d], diagNormal[d], diagTight[d], diagTotal[d]));
+      }
+      Logger.d(TAG, sb.toString());
+    }
+
     return topScore;
   }
 
@@ -722,20 +825,6 @@ public class Min2mSuggest implements Suggest {
     // score = normalized * 60 - 60
     double normalized = (double) (mPriorities[1] - 1) / (Integer.MAX_VALUE / 2 - 2);
     return (float) (normalized * 60.0 - 60.0);
-  }
-
-  /**
-   * Finds the int priority of the typed word in the current suggestion list.
-   * Returns -1 if not found.
-   */
-  private int findTypedWordPriority(@NonNull String lowerOriginalWord) {
-    for (int i = 1; i < mSuggestions.size() && i < mPriorities.length; i++) {
-      CharSequence s = mSuggestions.get(i);
-      if (s != null && s.toString().equalsIgnoreCase(lowerOriginalWord)) {
-        return mPriorities[i];
-      }
-    }
-    return -1;
   }
 
   /** Bridge callback that inserts ASK dictionary results into our ranked suggestion list. */

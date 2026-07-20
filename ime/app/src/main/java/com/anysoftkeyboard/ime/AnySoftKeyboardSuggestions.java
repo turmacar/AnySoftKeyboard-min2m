@@ -780,6 +780,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
     }
 
     if (!handledOutputToInputConnection) {
+      // Mark expected BEFORE sendKeyChar so the resulting cursor update
+      // doesn't reset mLastSpaceTimeStamp via onUpdateSelection.
+      markExpectingSelectionUpdate();
       for (char c : Character.toChars(primaryCode)) {
         sendKeyChar(c);
       }
@@ -1194,6 +1197,9 @@ public abstract class AnySoftKeyboardSuggestions extends AnySoftKeyboardKeyboard
 
       // Follow it with a space
       if (withAutoSpaceEnabled && (index == 0 || !typedWord.isAtTagsSearchState())) {
+        // Mark expected so the async onUpdateSelection from sendKeyChar
+        // doesn't reset mLastSpaceTimeStamp before we set it.
+        markExpectingSelectionUpdate();
         sendKeyChar((char) KeyCodes.SPACE);
         setSpaceTimeStamp(true);
       }
