@@ -805,7 +805,18 @@ public abstract class AnySoftKeyboard extends AnySoftKeyboardColorizeNavBar {
       container.addRightStripAction(mBackspaceStripAction);
       InputViewBinder inputView = getInputView();
       if (inputView instanceof AnyKeyboardView kbdView) {
+        // Apply themed icons
         mBackspaceStripAction.setIcon(kbdView.getDrawableForKeyCode(KeyCodes.DELETE));
+        mShiftStripAction.setThemedIcons(
+            kbdView.getDrawableForKeyCode(KeyCodes.SHIFT),
+            kbdView.getDrawableForKeyCode(KeyCodes.SHIFT),
+            kbdView.getDrawableForKeyCode(KeyCodes.SHIFT));
+        // Apply theme's function key colors to strip action backgrounds
+        int[] themeColors = kbdView.getFunctionKeyColors();
+        if (themeColors != null) {
+          mShiftStripAction.setThemeBackground(themeColors[0], themeColors[1]);
+          mBackspaceStripAction.setThemeBackground(themeColors[0], themeColors[1]);
+        }
       }
     } else {
       if (mShiftStripAction != null) {

@@ -99,6 +99,8 @@ dependencies {
     implementation project(':addons:base')
     implementation project(':addons:languages:english:pack')
     implementation project(':addons:themes:min2m:pack')
+    implementation project(':addons:themes:min2m_dark:pack')
+    implementation project(':addons:themes:min2m_light:pack')
     implementation project(':ime:base')
     implementation project(':ime:base-rx')
     implementation project(':ime:nextword')

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme: near-black background, subtle charcoal keys, white text.
+         Matches Minuum's "Flat Dark" theme (screenshot 23). -->
+    <color name="min2m_dark_color_keyboard_bg">#FF1A1A1E</color>
+    <color name="min2m_dark_color_suggestion_bg">#FF141418</color>
+
+    <color name="min2m_dark_color_key_normal">#FF2A2A30</color>
+    <color name="min2m_dark_color_key_normal_pressed">#FF3A3A42</color>
+    <color name="min2m_dark_color_key_function">#FF222228</color>
+    <color name="min2m_dark_color_key_function_pressed">#FF3A3A42</color>
+    <color name="min2m_dark_color_key_action">#FF222228</color>
+    <color name="min2m_dark_color_key_action_pressed">#FF3A3A42</color>
+
+    <color name="min2m_dark_color_key_text_normal">#FFFAFAFA</color>
+    <color name="min2m_dark_color_key_text_pressed">#FFFFFFFF</color>
+    <color name="min2m_dark_color_key_text_function">#FF888890</color>
+    <color name="min2m_dark_color_key_text_action">#FF888890</color>
+
+    <color name="min2m_dark_color_hint_normal">#FF666670</color>
+    <color name="min2m_dark_color_hint_pressed">#FF888890</color>
+    <color name="min2m_dark_color_hint_function">#FF666670</color>
+    <color name="min2m_dark_color_hint_action">#FF555560</color>
+
+    <color name="min2m_dark_color_space_accent">#FF444450</color>
+    <color name="min2m_dark_color_space_accent_pressed">#FF555560</color>
+
+    <color name="min2m_dark_color_suggestion_normal">#FFD0D0D8</color>
+    <color name="min2m_dark_color_suggestion_recommended">#FFFFFFFF</color>
+    <color name="min2m_dark_color_suggestion_other">#FF888890</color>
+
+    <color name="min2m_dark_color_preview_bg">#FF2A2A30</color>
+    <color name="min2m_dark_color_preview_stroke">#FF555560</color>
+</resources>

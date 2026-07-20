@@ -1,0 +1,4 @@
+Min2m dark keyboard theme for AnySoftKeyboard.
+A Minuum-inspired compact dark theme with teal accent keys and readable hint coloring.
+
+Note: this is a theme pack — install AnySoftKeyboard first, then select this theme from its settings.

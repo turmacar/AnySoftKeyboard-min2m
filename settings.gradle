@@ -12,6 +12,8 @@ include ':addons:languages:english:apk'
 //list of themes should be alphabetized-ordered
 include ':addons:themes'
 include ':addons:themes:min2m:pack', ':addons:themes:min2m:apk'
+include ':addons:themes:min2m_dark:pack', ':addons:themes:min2m_dark:apk'
+include ':addons:themes:min2m_light:pack', ':addons:themes:min2m_light:apk'
 
 //list of quick-text should be alphabetized-ordered
 include ':addons:quicktexts'

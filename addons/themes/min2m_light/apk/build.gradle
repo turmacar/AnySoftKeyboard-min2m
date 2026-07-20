@@ -1,0 +1,10 @@
+ext.shouldBePublished = true
+ext.override_app_id = 'com.anysoftkeyboard.theme.min2m.light'
+ext.override_release_key_alias = 'packs'
+ext.closedTestingTrackName = 'alpha'
+
+apply from: "$rootDir/addons/gradle/pack_apk.gradle"
+
+dependencies {
+    implementation project(path: ':addons:themes:min2m_light:pack')
+}

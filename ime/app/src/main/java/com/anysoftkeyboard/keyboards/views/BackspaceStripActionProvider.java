@@ -1,6 +1,8 @@
 package com.anysoftkeyboard.keyboards.views;
 
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.LayoutInflater;
@@ -22,6 +24,7 @@ public class BackspaceStripActionProvider implements KeyboardViewContainerView.S
   private final Handler mHandler = new Handler(Looper.getMainLooper());
   private boolean mRepeating;
   private ImageView mBackspaceIcon;
+  private View mRootView;
 
   private final Runnable mRepeatRunnable =
       new Runnable() {
@@ -41,6 +44,7 @@ public class BackspaceStripActionProvider implements KeyboardViewContainerView.S
     View root =
         LayoutInflater.from(parent.getContext())
             .inflate(R.layout.backspace_strip_action, parent, false);
+    mRootView = root;
     mBackspaceIcon = root.findViewById(R.id.backspace_strip_action_icon);
     root.setOnClickListener(
         v -> mKeyboardActionListener.onKey(KeyCodes.DELETE, null, 0, null, true));
@@ -76,6 +80,23 @@ public class BackspaceStripActionProvider implements KeyboardViewContainerView.S
     if (mBackspaceIcon != null && icon != null) {
       mBackspaceIcon.setImageDrawable(icon);
     }
+  }
+
+  /**
+   * Sets the background color for the strip action button to match the theme.
+   */
+  public void setThemeBackground(int normalColor, int pressedColor) {
+    if (mRootView == null) return;
+    StateListDrawable bg = new StateListDrawable();
+    GradientDrawable pressed = new GradientDrawable();
+    pressed.setShape(GradientDrawable.RECTANGLE);
+    pressed.setColor(pressedColor);
+    GradientDrawable normal = new GradientDrawable();
+    normal.setShape(GradientDrawable.RECTANGLE);
+    normal.setColor(normalColor);
+    bg.addState(new int[]{android.R.attr.state_pressed}, pressed);
+    bg.addState(new int[]{}, normal);
+    mRootView.setBackground(bg);
   }
 
   @Override

@@ -1605,6 +1605,45 @@ public class AnyKeyboardViewBase extends View implements InputViewBinder, Pointe
   }
 
   @Nullable
+  public Drawable getKeyBackground() {
+    return mThemeOverlayCombiner.getThemeResources().getKeyBackground();
+  }
+
+  /**
+   * Extracts the function key normal and pressed colors from the theme's key background.
+   * Returns [normalColor, pressedColor] or null if not available.
+   */
+  @Nullable
+  public int[] getFunctionKeyColors() {
+    Drawable keyBg = getKeyBackground();
+    if (!(keyBg instanceof android.graphics.drawable.StateListDrawable stateList)) return null;
+
+    // Extract pressed color: set pressed+function state, get current drawable
+    int pressedColor = extractColorFromStateDrawable(stateList,
+        new int[]{android.R.attr.state_pressed});
+    // Extract normal color: set just function state (no pressed)
+    int normalColor = extractColorFromStateDrawable(stateList, new int[]{});
+
+    if (normalColor == 0 && pressedColor == 0) return null;
+    return new int[]{normalColor, pressedColor};
+  }
+
+  private int extractColorFromStateDrawable(
+      @NonNull android.graphics.drawable.StateListDrawable stateList, int[] state) {
+    stateList.setState(state);
+    Drawable current = stateList.getCurrent();
+    if (current instanceof android.graphics.drawable.GradientDrawable gd) {
+      android.content.res.ColorStateList colors = gd.getColor();
+      if (colors != null) return colors.getDefaultColor();
+    } else if (current instanceof android.graphics.drawable.ColorDrawable cd) {
+      return cd.getColor();
+    } else if (current instanceof android.graphics.drawable.ShapeDrawable sd) {
+      return sd.getPaint().getColor();
+    }
+    return 0;
+  }
+
+  @Nullable
   public Drawable getDrawableForKeyCode(int keyCode) {
     Drawable icon = mKeysIcons.get(keyCode);
 

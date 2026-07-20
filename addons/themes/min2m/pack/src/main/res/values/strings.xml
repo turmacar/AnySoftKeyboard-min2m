@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <string name="min2m_keyboard_theme_name">Min2m Dark Theme</string>
-    <string name="min2m_keyboard_theme_description">Min2m-inspired dark theme with stronger symbol hint readability</string>
+    <string name="min2m_keyboard_theme_name">min2m Blue</string>
+    <string name="min2m_keyboard_theme_description">min2m default theme — dark teal with cyan accents</string>
     
 </resources>

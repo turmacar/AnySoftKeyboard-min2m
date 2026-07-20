@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:ask="http://schemas.android.com/apk/res-auto">
+
+    <item ask:action_search="true" ask:key_type_feedback="true" android:drawable="@drawable/min2m_light_search_icon_pressed" />
+    <item ask:action_search="true" android:drawable="@drawable/min2m_light_search_icon" />
+
+    <item ask:key_type_feedback="true" android:drawable="@drawable/min2m_light_enter_icon_pressed" />
+    <item android:drawable="@drawable/min2m_light_enter_icon" />
+</selector>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:ask="http://schemas.android.com/apk/res-auto">
+
+    <item android:state_checked="true" ask:key_type_feedback="true" android:drawable="@drawable/min2m_light_shift_vec_locked" />
+    <item android:state_checked="true" android:drawable="@drawable/min2m_light_shift_vec_locked" />
+
+    <item android:state_pressed="true" ask:key_type_feedback="true" android:drawable="@drawable/min2m_light_shift_vec_on" />
+    <item android:state_pressed="true" android:drawable="@drawable/min2m_light_shift_vec_on" />
+
+    <item ask:key_type_feedback="true" android:drawable="@drawable/min2m_light_shift_vec_off" />
+    <item android:drawable="@drawable/min2m_light_shift_vec_off" />
+</selector>
