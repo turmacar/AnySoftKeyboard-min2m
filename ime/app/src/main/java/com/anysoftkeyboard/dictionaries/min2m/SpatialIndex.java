@@ -220,6 +220,24 @@ public class SpatialIndex {
   @NonNull
   public List<Min2mVocabulary.CandidateWord> query(
       float[] touchXs, float[] touchYs, int touchCount, int k) {
+    return query(touchXs, touchYs, touchCount, k, -1, 2);
+  }
+
+  /**
+   * Queries the spatial index with configurable length range.
+   *
+   * @param touchXs x-coordinates of touches
+   * @param touchYs y-coordinates of touches
+   * @param touchCount number of touches
+   * @param k maximum candidates to return per length bucket
+   * @param minLenOffset minimum length offset from touchCount (e.g., -1 for touchCount-1)
+   * @param maxLenOffset maximum length offset from touchCount (e.g., 2 for touchCount+2)
+   * @return list of candidate words, spatially nearest first
+   */
+  @NonNull
+  public List<Min2mVocabulary.CandidateWord> query(
+      float[] touchXs, float[] touchYs, int touchCount, int k,
+      int minLenOffset, int maxLenOffset) {
     // Snapshot volatile fields for a consistent view throughout the query
     final KdNode[] trees = mTrees;
     final IndexEntry[][] entries = mEntries;
@@ -231,8 +249,10 @@ public class SpatialIndex {
     List<Min2mVocabulary.CandidateWord> results = new ArrayList<>();
     java.util.Set<String> seen = new java.util.HashSet<>();
 
-    // Query exact length + edit distance lengths (missed/extra keystroke)
-    for (int len = Math.max(1, touchCount - 1); len <= touchCount + 2; len++) {
+    // Query length buckets in the specified range
+    int minLen = Math.max(1, touchCount + minLenOffset);
+    int maxLen = touchCount + maxLenOffset;
+    for (int len = minLen; len <= maxLen; len++) {
       if (len > MAX_INDEXED_LENGTH) continue;
       if (trees[len] == null || entries[len] == null) continue;
 

@@ -296,6 +296,28 @@ public class Min2mSuggest implements Suggest {
     return mNextSuggestions;
   }
 
+  // --- 3-Phase Progressive Disambiguation ---
+  // Modeled on Minuum's native engine which takes a threshold parameter and
+  // returns phasesCompleted (1-3). Each phase widens the search:
+  //   Phase 1 (Tight): exact-length only, small K, early exit if confident
+  //   Phase 2 (Relaxed): ±1 length (edit distance), larger K
+  //   Phase 3 (Loose): ±2 length, full K, plus space-omission candidates
+
+  /** KD-tree K per phase. Phase 1 is tight, Phase 3 is the current full search. */
+  private static final int PHASE1_K = 40;
+  private static final int PHASE2_K = 70;
+  private static final int PHASE3_K = 100;
+
+  /**
+   * Confidence threshold for Phase 1 early exit. If the top candidate's
+   * Bayesian score exceeds this, we skip Phases 2 and 3. Modeled on
+   * Minuum's 0.1f threshold passed to Disambiguator_disambiguate().
+   * Our score scale is different (log-space, range ~[-60, 0]), so we use
+   * a threshold that represents "strong match": the spatial fit is good
+   * and the word is reasonably common.
+   */
+  private static final float PHASE1_CONFIDENCE_THRESHOLD = -3.0f;
+
   @Override
   public List<CharSequence> getSuggestions(WordComposer wordComposer) {
     if (!mEnabledSuggestions) return Collections.emptyList();
@@ -327,12 +349,6 @@ public class Min2mSuggest implements Suggest {
     int typedWordSpatialPriority = -1;
 
     if (mVocabulary.isOpen()) {
-      // --- Step 1: Generate candidate pool ---
-      // Use kd-tree spatial index when available (O(log n) nearest-neighbor
-      // search in key-position space). Falls back to brute-force by
-      // length + first-char when the index isn't built yet.
-      List<Min2mVocabulary.CandidateWord> candidates;
-
       // Extract touch coordinates early — needed for both kd-tree query and HMM scoring
       float[] touchXs = new float[touchCount];
       float[] touchYs = new float[touchCount];
@@ -343,93 +359,40 @@ public class Min2mSuggest implements Suggest {
         }
       }
 
-      long tQuery;
-
-      if (hasTouchData && mSpatialIndex.isBuilt()) {
-        // KD-tree path: query returns spatially nearest words across
-        // exact-length and +/-1 edit-distance length buckets
-        long t0 = System.nanoTime();
-        candidates = mSpatialIndex.query(touchXs, touchYs, touchCount, 100);
-
-        // For words longer than the kd-tree covers (>20 chars), the query
-        // returns nothing for those length buckets. Fall back to brute-force
-        // for the ~33 words that exceed MAX_INDEXED_LENGTH.
-        if (touchCount > 20) {
-          java.util.Set<Character> allChars = new java.util.HashSet<>();
-          for (char ch = 'a'; ch <= 'z'; ch++) allChars.add(ch);
-          for (Min2mVocabulary.CandidateWord c : mVocabulary.getSpatialCandidates(
-              allChars, touchCount, lowerOriginalWord, 50)) {
-            candidates.add(c);
-          }
-        }
-
-        // Supplement with prefix matches for the typed word (the key detector's
-        // output may still be useful even if not spatially optimal)
-        for (Min2mVocabulary.CandidateWord pw : mVocabulary.getPrefixMatches(lowerOriginalWord, 20)) {
-          candidates.add(pw);
-        }
-
-        tQuery = System.nanoTime() - t0;
-      } else {
-        // Fallback: brute-force candidate pool (pre-kd-tree path)
-        long t0 = System.nanoTime();
-        java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
-        for (char ch = 'a'; ch <= 'z'; ch++) {
-          firstCharCandidates.add(ch);
-        }
-        candidates = mVocabulary.getSpatialCandidates(
-            firstCharCandidates, touchCount, lowerOriginalWord, mPrefMaxSuggestions * 3);
-        tQuery = System.nanoTime() - t0;
-      }
-
       // Build n-gram context set for boosting
       java.util.Set<String> bigramNextWords = new java.util.HashSet<>();
       for (CharSequence nw : mNextSuggestions) {
         bigramNextWords.add(nw.toString().toLowerCase(mLocale));
       }
 
-      // --- Step 3: Score every candidate ---
-      // Spatial scoring is always primary. All candidates (including the typed
-      // word) are scored uniformly by: α·ln(freq/max) + β·spatialLogP.
-      // The key detector's output is just an approximation - the spatial scorer
-      // is the real decoder, like Minuum.
-      long tScore0 = System.nanoTime();
-      int scoredCount = 0;
-      for (Min2mVocabulary.CandidateWord candidate : candidates) {
-        // Trigram pre-filter: skip candidates with implausible char sequences
-        if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
-            && !mVocabulary.isPlausibleWord(candidate.text)) {
-          continue;
+      long tTotal0 = System.nanoTime();
+      int phasesCompleted;
+
+      if (hasTouchData && mSpatialIndex.isBuilt()) {
+        // === 3-Phase progressive disambiguation (kd-tree path) ===
+        phasesCompleted = runProgressiveDisambiguation(
+            touchXs, touchYs, touchCount, lowerOriginalWord,
+            isFirstCharCapitalized, isAllUpperCase, bigramNextWords);
+
+        // Track typed word's priority for auto-correction decision
+        typedWordSpatialPriority = findTypedWordPriority(lowerOriginalWord);
+      } else {
+        // Fallback: brute-force candidate pool (pre-kd-tree path)
+        phasesCompleted = 0;
+        java.util.Set<Character> firstCharCandidates = new java.util.HashSet<>();
+        for (char ch = 'a'; ch <= 'z'; ch++) {
+          firstCharCandidates.add(ch);
         }
-
-        float spatialLogP = hasTouchData
-            ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
-            : 0f;
-        scoredCount++;
-        int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
-        float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
-
-        // N-gram context boost
-        if (bigramNextWords.contains(candidate.text)) {
-          bayesianScore += 3.0f;
-        }
-
-        int scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
-
-        // Track the typed word's spatial score for auto-correction decision
-        if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
-          typedWordSpatialPriority = scaledFreq;
-        }
-
-        StringBuilder sb = getStringBuilderFromPool(
-            candidate.text, isFirstCharCapitalized, isAllUpperCase);
-        insertSuggestion(sb, scaledFreq);
+        List<Min2mVocabulary.CandidateWord> candidates = mVocabulary.getSpatialCandidates(
+            firstCharCandidates, touchCount, lowerOriginalWord, mPrefMaxSuggestions * 3);
+        typedWordSpatialPriority = scoreCandidates(candidates, touchXs, touchYs,
+            touchCount, hasTouchData, lowerOriginalWord, isFirstCharCapitalized,
+            isAllUpperCase, bigramNextWords);
       }
-      long tScore = System.nanoTime() - tScore0;
 
       if (BuildConfig.DEBUG) {
-        Logger.d(TAG, "perf: query=%.2fms (%d candidates), score=%.2fms (%d scored), total=%.2fms",
-            tQuery / 1e6, candidates.size(), tScore / 1e6, scoredCount, (tQuery + tScore) / 1e6);
+        long tTotal = System.nanoTime() - tTotal0;
+        Logger.d(TAG, "perf: total=%.2fms, phases=%d", tTotal / 1e6, phasesCompleted);
       }
     }
 
@@ -438,7 +401,7 @@ public class Min2mSuggest implements Suggest {
     mSuggestionsProvider.getAutoText(wordComposer, mAskBridgeCallback);
     mSuggestionsProvider.getUserAndContactsSuggestions(wordComposer, mAskBridgeCallback);
 
-    // --- Step 4: Auto-correction ---
+    // --- Auto-correction ---
     // Auto-correct to position 1 only if it scored higher than the typed word.
     // If the typed word IS the spatial winner (e.g., user typed "I" correctly
     // and it has the best spatial+frequency score), don't auto-correct away.
@@ -466,6 +429,313 @@ public class Min2mSuggest implements Suggest {
       Logger.d(TAG, logMsg.toString());
     }
     return mSuggestions;
+  }
+
+  /**
+   * Runs 3-phase progressive disambiguation using the kd-tree spatial index.
+   *
+   * <p>Phase 1 (Tight): exact-length candidates only, small K, early exit if confident.
+   * Phase 2 (Relaxed): ±1 length for edit distance, larger K.
+   * Phase 3 (Loose): ±2 length, full K, plus space-omission candidates.
+   *
+   * <p>Modeled on Minuum's native {@code Disambiguator_disambiguate()} which accepted a
+   * threshold parameter and returned {@code phasesCompleted} (1-3).
+   *
+   * @return number of phases completed (1, 2, or 3)
+   */
+  private int runProgressiveDisambiguation(
+      float[] touchXs, float[] touchYs, int touchCount,
+      @NonNull String lowerOriginalWord,
+      boolean isFirstCharCapitalized, boolean isAllUpperCase,
+      @NonNull java.util.Set<String> bigramNextWords) {
+
+    // === Phase 1 (Tight): exact-length only, small K ===
+    List<Min2mVocabulary.CandidateWord> candidates =
+        mSpatialIndex.query(touchXs, touchYs, touchCount, PHASE1_K, 0, 0);
+
+    // Always supplement with prefix matches for the typed word
+    for (Min2mVocabulary.CandidateWord pw : mVocabulary.getPrefixMatches(lowerOriginalWord, 10)) {
+      candidates.add(pw);
+    }
+
+    float topScore = scoreCandidatesAndGetTopScore(candidates, touchXs, touchYs,
+        touchCount, true, lowerOriginalWord, isFirstCharCapitalized,
+        isAllUpperCase, bigramNextWords);
+
+    if (topScore > PHASE1_CONFIDENCE_THRESHOLD) {
+      if (BuildConfig.DEBUG) {
+        Logger.d(TAG, "Phase 1 confident (topScore=%.2f > %.2f), %d candidates",
+            topScore, PHASE1_CONFIDENCE_THRESHOLD, candidates.size());
+      }
+      return 1;
+    }
+
+    // === Phase 2 (Relaxed): ±1 length, larger K ===
+    // Query edit-distance length buckets not covered by Phase 1
+    List<Min2mVocabulary.CandidateWord> phase2Candidates =
+        mSpatialIndex.query(touchXs, touchYs, touchCount, PHASE2_K, -1, 1);
+
+    // Add more prefix matches
+    for (Min2mVocabulary.CandidateWord pw : mVocabulary.getPrefixMatches(lowerOriginalWord, 20)) {
+      phase2Candidates.add(pw);
+    }
+
+    scoreCandidatesAndGetTopScore(phase2Candidates, touchXs, touchYs,
+        touchCount, true, lowerOriginalWord, isFirstCharCapitalized,
+        isAllUpperCase, bigramNextWords);
+
+    // Check if Phase 2 produced a confident result
+    topScore = getTopCandidateScore();
+    if (topScore > PHASE1_CONFIDENCE_THRESHOLD) {
+      if (BuildConfig.DEBUG) {
+        Logger.d(TAG, "Phase 2 confident (topScore=%.2f), %d new candidates",
+            topScore, phase2Candidates.size());
+      }
+      return 2;
+    }
+
+    // === Phase 3 (Loose): ±2 length, full K, space-omission ===
+    List<Min2mVocabulary.CandidateWord> phase3Candidates =
+        mSpatialIndex.query(touchXs, touchYs, touchCount, PHASE3_K, -2, 2);
+
+    // For words longer than the kd-tree covers (>20 chars), fall back to brute-force
+    if (touchCount > 20) {
+      java.util.Set<Character> allChars = new java.util.HashSet<>();
+      for (char ch = 'a'; ch <= 'z'; ch++) allChars.add(ch);
+      for (Min2mVocabulary.CandidateWord c : mVocabulary.getSpatialCandidates(
+          allChars, touchCount, lowerOriginalWord, 50)) {
+        phase3Candidates.add(c);
+      }
+    }
+
+    scoreCandidatesAndGetTopScore(phase3Candidates, touchXs, touchYs,
+        touchCount, true, lowerOriginalWord, isFirstCharCapitalized,
+        isAllUpperCase, bigramNextWords);
+
+    // Space-omission detection: try splitting the input into two words
+    // Minimum 6 touches (3+3) to avoid nonsense splits like "by kw" from 4-char input
+    if (touchCount >= 6) {
+      generateSpaceOmissionCandidates(touchXs, touchYs, touchCount,
+          isFirstCharCapitalized, isAllUpperCase, bigramNextWords);
+    }
+
+    if (BuildConfig.DEBUG) {
+      Logger.d(TAG, "Phase 3 complete (topScore=%.2f), %d new candidates + space-omission",
+          getTopCandidateScore(), phase3Candidates.size());
+    }
+    return 3;
+  }
+
+  /**
+   * Generates space-omission candidates by splitting the touch sequence at each position
+   * and scoring each half as an independent word. If a split produces two valid words
+   * whose combined score beats existing candidates, the joined form is inserted.
+   *
+   * <p>Example: "helloworld" (10 touches) → try "hello world" (5+5),
+   * "hell oworld" (4+6), etc. Only splits where both halves are valid words
+   * and each half is at least 2 characters are considered.
+   */
+  private void generateSpaceOmissionCandidates(
+      float[] touchXs, float[] touchYs, int touchCount,
+      boolean isFirstCharCapitalized, boolean isAllUpperCase,
+      @NonNull java.util.Set<String> bigramNextWords) {
+
+    // Try each split point (minimum 3 characters per half)
+    for (int splitAt = 3; splitAt <= touchCount - 3; splitAt++) {
+      // Score the first half
+      float[] firstXs = new float[splitAt];
+      float[] firstYs = new float[splitAt];
+      System.arraycopy(touchXs, 0, firstXs, 0, splitAt);
+      System.arraycopy(touchYs, 0, firstYs, 0, splitAt);
+
+      // Get best candidate for first half
+      List<Min2mVocabulary.CandidateWord> firstCandidates =
+          mSpatialIndex.query(firstXs, firstYs, splitAt, 5, 0, 0);
+      if (firstCandidates.isEmpty()) continue;
+
+      // Score the second half
+      int secondLen = touchCount - splitAt;
+      float[] secondXs = new float[secondLen];
+      float[] secondYs = new float[secondLen];
+      System.arraycopy(touchXs, splitAt, secondXs, 0, secondLen);
+      System.arraycopy(touchYs, splitAt, secondYs, 0, secondLen);
+
+      List<Min2mVocabulary.CandidateWord> secondCandidates =
+          mSpatialIndex.query(secondXs, secondYs, secondLen, 5, 0, 0);
+      if (secondCandidates.isEmpty()) continue;
+
+      // Score top candidates from each half
+      Min2mVocabulary.CandidateWord bestFirst = null;
+      float bestFirstScore = Float.NEGATIVE_INFINITY;
+      for (Min2mVocabulary.CandidateWord c : firstCandidates) {
+        if (!mVocabulary.isPlausibleWord(c.text)) continue;
+        float spatialLogP = mHmmScorer.scoreWord(c.text, firstXs, firstYs, splitAt);
+        float score = mRanker.score(c.frequency, spatialLogP,
+            c.text.codePointCount(0, c.text.length()));
+        if (score > bestFirstScore) {
+          bestFirstScore = score;
+          bestFirst = c;
+        }
+      }
+
+      Min2mVocabulary.CandidateWord bestSecond = null;
+      float bestSecondScore = Float.NEGATIVE_INFINITY;
+      for (Min2mVocabulary.CandidateWord c : secondCandidates) {
+        if (!mVocabulary.isPlausibleWord(c.text)) continue;
+        float spatialLogP = mHmmScorer.scoreWord(c.text, secondXs, secondYs, secondLen);
+        float score = mRanker.score(c.frequency, spatialLogP,
+            c.text.codePointCount(0, c.text.length()));
+        if (score > bestSecondScore) {
+          bestSecondScore = score;
+          bestSecond = c;
+        }
+      }
+
+      if (bestFirst == null || bestSecond == null) continue;
+
+      // Both halves must be real dictionary words — reject nonsense like "kw"
+      if (!mVocabulary.isValidWord(bestFirst.text) || !mVocabulary.isValidWord(bestSecond.text)) {
+        continue;
+      }
+
+      // Each half must be a good spatial match on its own.
+      // Threshold: -4.0 means roughly -1.0 per character for short words.
+      if (bestFirstScore < -4.0f || bestSecondScore < -4.0f) {
+        continue;
+      }
+
+      // Combined score: SUM of both halves (not average) so the total is
+      // directly comparable to a single-word HMM score over all touches.
+      // The penalty models Minuum's pOmitSpace=0.01: ln(0.01) ≈ -4.6.
+      float combinedScore = bestFirstScore + bestSecondScore - 5.0f;
+      int scaledFreq = BayesianCandidateRanker.toIntPriority(combinedScore);
+
+      // Build the joined suggestion "word1 word2"
+      String joined = bestFirst.text + " " + bestSecond.text;
+      StringBuilder sb = getStringBuilderFromPool(
+          joined, isFirstCharCapitalized, isAllUpperCase);
+      insertSuggestion(sb, scaledFreq);
+
+      if (BuildConfig.DEBUG) {
+        Logger.d(TAG, "Space-omission: '%s %s' (score=%.2f, split@%d)",
+            bestFirst.text, bestSecond.text, combinedScore, splitAt);
+      }
+    }
+  }
+
+  /**
+   * Scores a list of candidates and inserts them into the suggestion list.
+   * Returns the spatial priority of the typed word if found, or -1.
+   */
+  private int scoreCandidates(
+      @NonNull List<Min2mVocabulary.CandidateWord> candidates,
+      float[] touchXs, float[] touchYs, int touchCount,
+      boolean hasTouchData, @NonNull String lowerOriginalWord,
+      boolean isFirstCharCapitalized, boolean isAllUpperCase,
+      @NonNull java.util.Set<String> bigramNextWords) {
+    int typedWordSpatialPriority = -1;
+    for (Min2mVocabulary.CandidateWord candidate : candidates) {
+      if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
+          && !mVocabulary.isPlausibleWord(candidate.text)) {
+        continue;
+      }
+
+      float spatialLogP = hasTouchData
+          ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
+          : 0f;
+      int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
+      float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
+
+      if (bigramNextWords.contains(candidate.text)) {
+        bayesianScore += 3.0f;
+      }
+
+      int scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
+
+      if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
+        typedWordSpatialPriority = scaledFreq;
+      }
+
+      StringBuilder sb = getStringBuilderFromPool(
+          candidate.text, isFirstCharCapitalized, isAllUpperCase);
+      insertSuggestion(sb, scaledFreq);
+    }
+    return typedWordSpatialPriority;
+  }
+
+  /**
+   * Scores candidates and returns the top Bayesian score (not int-priority).
+   * Used for confidence checking in progressive disambiguation.
+   */
+  private float scoreCandidatesAndGetTopScore(
+      @NonNull List<Min2mVocabulary.CandidateWord> candidates,
+      float[] touchXs, float[] touchYs, int touchCount,
+      boolean hasTouchData, @NonNull String lowerOriginalWord,
+      boolean isFirstCharCapitalized, boolean isAllUpperCase,
+      @NonNull java.util.Set<String> bigramNextWords) {
+    float topScore = Float.NEGATIVE_INFINITY;
+    for (Min2mVocabulary.CandidateWord candidate : candidates) {
+      if (!candidate.text.equalsIgnoreCase(lowerOriginalWord)
+          && !mVocabulary.isPlausibleWord(candidate.text)) {
+        continue;
+      }
+
+      float spatialLogP = hasTouchData
+          ? mHmmScorer.scoreWord(candidate.text, touchXs, touchYs, touchCount)
+          : 0f;
+      int candidateLen = candidate.text.codePointCount(0, candidate.text.length());
+      float bayesianScore = mRanker.score(candidate.frequency, spatialLogP, candidateLen);
+
+      if (bigramNextWords.contains(candidate.text)) {
+        bayesianScore += 3.0f;
+      }
+
+      if (bayesianScore > topScore) {
+        topScore = bayesianScore;
+      }
+
+      int scaledFreq = BayesianCandidateRanker.toIntPriority(bayesianScore);
+
+      if (candidate.text.equalsIgnoreCase(lowerOriginalWord)) {
+        // tracked externally via findTypedWordPriority
+      }
+
+      StringBuilder sb = getStringBuilderFromPool(
+          candidate.text, isFirstCharCapitalized, isAllUpperCase);
+      insertSuggestion(sb, scaledFreq);
+    }
+    return topScore;
+  }
+
+  /**
+   * Returns the current top candidate's Bayesian score by reverse-mapping
+   * the int priority at position 1 back to a score. Used for confidence
+   * checking across phases.
+   */
+  private float getTopCandidateScore() {
+    if (mSuggestions.size() <= 1 || mPriorities[1] <= 0) {
+      return Float.NEGATIVE_INFINITY;
+    }
+    // Reverse the toIntPriority mapping: priority → score
+    // priority = 1 + normalized * (MAX_VALUE/2 - 2)
+    // normalized = (priority - 1) / (MAX_VALUE/2 - 2)
+    // score = normalized * 60 - 60
+    double normalized = (double) (mPriorities[1] - 1) / (Integer.MAX_VALUE / 2 - 2);
+    return (float) (normalized * 60.0 - 60.0);
+  }
+
+  /**
+   * Finds the int priority of the typed word in the current suggestion list.
+   * Returns -1 if not found.
+   */
+  private int findTypedWordPriority(@NonNull String lowerOriginalWord) {
+    for (int i = 1; i < mSuggestions.size() && i < mPriorities.length; i++) {
+      CharSequence s = mSuggestions.get(i);
+      if (s != null && s.toString().equalsIgnoreCase(lowerOriginalWord)) {
+        return mPriorities[i];
+      }
+    }
+    return -1;
   }
 
   /** Bridge callback that inserts ASK dictionary results into our ranked suggestion list. */
